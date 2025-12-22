@@ -31,74 +31,11 @@ from pathlib import Path
 # Get project root (parent of tools/)
 PROJECT_ROOT = Path(__file__).parent.parent
 
-# =============================================================================
-# RECORDING PRESETS - Uncomment the one you want to use
-# =============================================================================
-
-# PRESET: FAST & SMOOTH (~1-2 hours, 500K bodies, 2000 frames)
-# Visually impressive, fast render, ~100 second video at 20fps
-RECORDING_CONFIG = {
-    "session_name": "collision_fast_500k-3",
-    "num_bodies": 100_000,            # Half million bodies!
-    "theta": 0.95,                    # Very fast (approximate physics)
-    "G": 0.15,                        # Slightly stronger gravity
-    "softening": 3.0,
-    "damping": 1.0,
-    "spawn_radius": 600.0,
-    "distribution": "collision",
-    "total_frames": 4000,             # LOTS of frames
-    "dt_per_frame": 0.15,
-    "substeps": 2,                    # Minimal for speed
-    "target_fps": 20,
-}
-
-# PRESET: COLLISION (~1.5 hours, 300K bodies, 1500 frames, two galaxies)
-# RECORDING_CONFIG = {
-#     "session_name": "collision_300k",
-#     "num_bodies": 300_000,
-#     "theta": 0.9,
-#     "G": 0.12,
-#     "softening": 2.5,
-#     "damping": 1.0,
-#     "spawn_radius": 500.0,
-#     "distribution": "collision",      # Two galaxies colliding!
-#     "total_frames": 1500,
-#     "dt_per_frame": 0.2,
-#     "substeps": 2,
-#     "target_fps": 20,
-# }
-
-# PRESET: MEGA FRAMES (~1 hour, 200K bodies, 4000 frames, ultra smooth)
-# RECORDING_CONFIG = {
-#     "session_name": "galaxy_ultrasmooth",
-#     "num_bodies": 200_000,
-#     "theta": 0.95,
-#     "G": 0.1,
-#     "softening": 2.0,
-#     "damping": 1.0,
-#     "spawn_radius": 500.0,
-#     "distribution": "galaxy",
-#     "total_frames": 4000,             # 200 seconds at 20fps!
-#     "dt_per_frame": 0.1,
-#     "substeps": 1,                    # Single step = max speed
-#     "target_fps": 20,
-# }
-
-# PRESET: SPIRAL GALAXY (~1-2 hours, 400K bodies, Milky Way style)
-# RECORDING_CONFIG = {
-#     "session_name": "spiral_milkyway",
-#     "num_bodies": 400_000,
-#     "theta": 0.9,
-#     "G": 0.08,                        # Tuned for spiral stability
-#     "softening": 2.0,
-#     "damping": 1.0,
-#     "spawn_radius": 600.0,
-#     "distribution": "spiral",         # Spiral arms + central bulge!
-#     "total_frames": 1500,
-#     "dt_per_frame": 0.12,
-#     "substeps": 3,
-#     "target_fps": 20,
-# }
+# Import preset library
+from tools.presets import (
+    PRESETS, get_preset_list, print_preset_menu, 
+    get_preset_by_index, get_preset_config, generate_distribution
+)
 
 
 def get_recording_dir(session_name: str) -> Path:
@@ -285,20 +222,41 @@ class BackgroundCompressor:
         return ""
 
 
-def format_time(seconds: float) -> str:
-    """Format seconds as human-readable time."""
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    elif seconds < 3600:
-        return f"{seconds/60:.1f}m"
+def format_time(seconds: float, short: bool = False) -> str:
+    """Format seconds as human-readable time.
+    
+    Args:
+        seconds: Time in seconds
+        short: If True, format for frame time (show ms for <1s)
+               If False, format for elapsed time (stay in seconds until 90s)
+    """
+    if short:
+        # Frame time format - show milliseconds for sub-second
+        if seconds < 1.0:
+            return f"{seconds*1000:.0f}ms"
+        elif seconds < 90:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            return f"{seconds/60:.1f}m"
+        else:
+            return f"{seconds/3600:.1f}h"
     else:
-        return f"{seconds/3600:.1f}h"
+        # Elapsed time format - stay in seconds until 90s
+        if seconds < 90:
+            return f"{seconds:.0f}s"
+        elif seconds < 3600:
+            return f"{seconds/60:.1f}m"
+        else:
+            return f"{seconds/3600:.1f}h"
 
 
 def format_eta(seconds: float) -> str:
-    """Format ETA."""
+    """Format ETA - stays in seconds until 90s, then switches to mm:ss or hh:mm:ss."""
     if seconds < 0:
         return "calculating..."
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    # Use timedelta for longer durations
     td = timedelta(seconds=int(seconds))
     return str(td)
 
@@ -311,13 +269,14 @@ def print_progress(frame: int, total: int, frame_time: float, elapsed: float, et
     bar = "█" * filled + "░" * (bar_width - filled)
     
     print(f"[{bar}] {pct:5.1f}% | Frame {frame+1:4d}/{total} | "
-          f"Time: {format_time(frame_time):>6s} | Elapsed: {format_time(elapsed):>6s} | "
+          f"Time: {format_time(frame_time, short=True):>6s} | Elapsed: {format_time(elapsed):>6s} | "
           f"ETA: {format_eta(eta)}")
 
 
 def _generate_initial_conditions(config: dict):
     """Generate initial positions, velocities, masses based on distribution.
     
+    Uses the distribution generator from presets library.
     This avoids creating a full NBodySimulation which would initialize GPU twice.
     """
     n = config["num_bodies"]
@@ -325,97 +284,13 @@ def _generate_initial_conditions(config: dict):
     G = config["G"]
     distribution = config.get("distribution", "galaxy")
     
-    if distribution == "galaxy":
-        # Disk-shaped distribution
-        r = np.random.exponential(R * 0.3, n)
-        theta = np.random.uniform(0, 2 * np.pi, n)
-        z = np.random.normal(0, R * 0.02, n)
-        
-        positions = np.zeros((n, 3), dtype=np.float64)
-        positions[:, 0] = r * np.cos(theta)
-        positions[:, 1] = z
-        positions[:, 2] = r * np.sin(theta)
-        
-        velocities = np.zeros((n, 3), dtype=np.float64)
-        orbital_speed = np.sqrt(G * n * 0.001 / (r + 1.0))
-        velocities[:, 0] = -orbital_speed * np.sin(theta)
-        velocities[:, 2] = orbital_speed * np.cos(theta)
-        velocities[:, 1] = np.random.normal(0, orbital_speed * 0.1, n)
-        
-    elif distribution == "collision":
-        # Two galaxies colliding
-        half = n // 2
-        positions = np.zeros((n, 3), dtype=np.float64)
-        velocities = np.zeros((n, 3), dtype=np.float64)
-        
-        # Galaxy 1
-        r1 = np.random.exponential(R * 0.2, half)
-        theta1 = np.random.uniform(0, 2 * np.pi, half)
-        positions[:half, 0] = r1 * np.cos(theta1) - R * 0.4
-        positions[:half, 1] = np.random.normal(0, R * 0.02, half)
-        positions[:half, 2] = r1 * np.sin(theta1)
-        
-        orbital_speed1 = np.sqrt(G * half * 0.001 / (r1 + 1.0))
-        velocities[:half, 0] = -orbital_speed1 * np.sin(theta1) + 2.0
-        velocities[:half, 2] = orbital_speed1 * np.cos(theta1)
-        
-        # Galaxy 2
-        r2 = np.random.exponential(R * 0.2, n - half)
-        theta2 = np.random.uniform(0, 2 * np.pi, n - half)
-        positions[half:, 0] = r2 * np.cos(theta2) + R * 0.4
-        positions[half:, 1] = np.random.normal(0, R * 0.02, n - half)
-        positions[half:, 2] = r2 * np.sin(theta2)
-        
-        orbital_speed2 = np.sqrt(G * (n - half) * 0.001 / (r2 + 1.0))
-        velocities[half:, 0] = -orbital_speed2 * np.sin(theta2) - 2.0
-        velocities[half:, 2] = orbital_speed2 * np.cos(theta2)
-        
-    elif distribution == "spiral":
-        # Spiral galaxy (simplified)
-        positions = np.zeros((n, 3), dtype=np.float64)
-        velocities = np.zeros((n, 3), dtype=np.float64)
-        
-        disk_r = np.random.exponential(R * 0.25, n)
-        disk_r = np.clip(disk_r, R * 0.02, R * 0.9)
-        
-        spiral_tightness = 0.3
-        base_theta = np.log(disk_r / (R * 0.05) + 1) / spiral_tightness
-        arm_assignment = np.random.randint(0, 4, n)
-        arm_offset = arm_assignment * (2 * np.pi / 4)
-        theta_scatter = np.random.normal(0, 0.3, n)
-        disk_theta = base_theta + arm_offset + theta_scatter
-        disk_z = np.random.normal(0, R * 0.01, n) * (1 + disk_r / R)
-        
-        positions[:, 0] = disk_r * np.cos(disk_theta)
-        positions[:, 1] = disk_z
-        positions[:, 2] = disk_r * np.sin(disk_theta)
-        
-        central_mass = n * 50.0
-        enclosed_mass = central_mass + disk_r / R * n * 0.5
-        orbital_speed = np.sqrt(G * enclosed_mass / (disk_r + 0.1))
-        
-        velocities[:, 0] = -orbital_speed * np.sin(disk_theta)
-        velocities[:, 2] = orbital_speed * np.cos(disk_theta)
-        velocities += np.random.normal(0, orbital_speed[:, np.newaxis] * 0.05, (n, 3))
-        
-    else:  # sphere or uniform
-        phi = np.random.uniform(0, 2 * np.pi, n)
-        cos_theta = np.random.uniform(-1, 1, n)
-        sin_theta = np.sqrt(1 - cos_theta**2)
-        r = R * 0.8 * np.cbrt(np.random.uniform(0, 1, n))
-        
-        positions = np.zeros((n, 3), dtype=np.float64)
-        positions[:, 0] = r * sin_theta * np.cos(phi)
-        positions[:, 1] = r * sin_theta * np.sin(phi)
-        positions[:, 2] = r * cos_theta
-        
-        velocities = np.random.normal(0, 0.5, (n, 3)).astype(np.float64)
+    # Use preset library's distribution generator
+    positions, velocities, masses = generate_distribution(distribution, n, R, G)
     
-    # Masses - mostly uniform with some heavier particles
-    masses = np.ones(n, dtype=np.float64)
-    heavy_count = max(1, n // 1000)
-    heavy_indices = np.random.choice(n, heavy_count, replace=False)
-    masses[heavy_indices] = 100.0
+    # Convert to float64 for compatibility
+    positions = positions.astype(np.float64)
+    velocities = velocities.astype(np.float64)
+    masses = masses.astype(np.float64)
     
     return positions, velocities, masses
 
@@ -689,37 +564,132 @@ def list_recordings():
     print()
 
 
+def select_preset_interactive() -> dict:
+    """Show preset menu and get user selection."""
+    print_preset_menu()
+    
+    presets = get_preset_list()
+    max_idx = len(presets) - 1
+    
+    while True:
+        try:
+            user_input = input("\n  Selection: ").strip().lower()
+            
+            if user_input in ['q', 'quit', 'exit']:
+                print("\n  Cancelled.")
+                return None
+            
+            idx = int(user_input)
+            
+            if 0 <= idx <= max_idx:
+                key, preset = get_preset_by_index(idx)
+                config = get_preset_config(key)
+                
+                print(f"\n  Selected: [{idx}] {preset['name']}")
+                print(f"  Distribution: {config['distribution']}")
+                print(f"  Bodies: {config['num_bodies']:,}")
+                print(f"  Frames: {config['total_frames']}")
+                print(f"  Estimated time: {preset.get('estimated_time', 'unknown')}")
+                
+                confirm = input("\n  Start recording? [Y/n]: ").strip().lower()
+                if confirm in ['', 'y', 'yes']:
+                    return config
+                else:
+                    print_preset_menu()
+            else:
+                print(f"  Invalid selection. Enter 0-{max_idx} or 'q' to quit.")
+                
+        except ValueError:
+            print(f"  Invalid input. Enter a number 0-{max_idx} or 'q' to quit.")
+        except KeyboardInterrupt:
+            print("\n\n  Cancelled.")
+            return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="N-Body offline renderer")
     parser.add_argument("session", nargs="?", help="Session name (for --resume or --status)")
     parser.add_argument("--resume", action="store_true", help="Resume interrupted recording")
     parser.add_argument("--status", action="store_true", help="Show recording status")
     parser.add_argument("--list", action="store_true", help="List all recordings")
+    parser.add_argument("--preset", type=str, help="Use preset by name (e.g., 'quick_galaxy')")
+    parser.add_argument("--preset-id", type=int, help="Use preset by index number")
     args = parser.parse_args()
     
     if args.list:
         list_recordings()
         return
     
-    if args.session:
-        session_name = args.session
-    else:
-        session_name = RECORDING_CONFIG["session_name"]
-    
+    # Handle status check
     if args.status:
-        show_status(session_name)
-    elif args.resume:
-        config = RECORDING_CONFIG.copy()
+        if args.session:
+            show_status(args.session)
+        else:
+            list_recordings()
+        return
+    
+    # Handle resume
+    if args.resume:
+        if args.session:
+            session_name = args.session
+        else:
+            # Find most recent recording to resume
+            recordings_dir = PROJECT_ROOT / "recordings"
+            if recordings_dir.exists():
+                sessions = [d for d in recordings_dir.iterdir() 
+                           if d.is_dir() and (d / "metadata.json").exists()]
+                if sessions:
+                    # Sort by modification time
+                    sessions.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                    session_name = sessions[0].name
+                    print(f"[Record] Resuming most recent: {session_name}")
+                else:
+                    print("[Record] No recordings found to resume")
+                    return
+            else:
+                print("[Record] No recordings directory found")
+                return
         
         rec_dir = get_recording_dir(session_name)
-        if (rec_dir / "metadata.json").exists():
-            metadata = load_metadata(rec_dir)
-            config.update(metadata)
-        config["session_name"] = session_name
+        if not (rec_dir / "metadata.json").exists():
+            print(f"[Record] No metadata found for session: {session_name}")
+            return
         
+        config = load_metadata(rec_dir)
+        config["session_name"] = session_name
         record(config, resume=True)
+        return
+    
+    # Handle preset selection
+    config = None
+    
+    if args.preset_id is not None:
+        # Use preset by index
+        key, preset = get_preset_by_index(args.preset_id)
+        if key:
+            config = get_preset_config(key)
+            print(f"[Record] Using preset [{args.preset_id}]: {preset['name']}")
+        else:
+            print(f"[Record] Invalid preset index: {args.preset_id}")
+            return
+    elif args.preset:
+        # Use preset by name
+        config = get_preset_config(args.preset)
+        if config:
+            print(f"[Record] Using preset: {args.preset}")
+        else:
+            print(f"[Record] Unknown preset: {args.preset}")
+            print("[Record] Available presets:")
+            for key in sorted(PRESETS.keys()):
+                print(f"  - {key}")
+            return
     else:
-        record(RECORDING_CONFIG, resume=False)
+        # Interactive menu
+        config = select_preset_interactive()
+        if config is None:
+            return
+    
+    record(config, resume=False)
 
 
 if __name__ == "__main__":

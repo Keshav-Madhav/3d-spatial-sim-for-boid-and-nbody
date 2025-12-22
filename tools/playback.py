@@ -3,13 +3,12 @@ N-Body Recording Playback
 =========================
 
 Plays back recorded simulation frames at any FPS.
-Can also export to video.
+For video export, use: python -m tools.export
 
 Usage:
     python -m tools.playback <session_name>              # Playback at default FPS
     python -m tools.playback <session_name> --fps 60    # Custom FPS
     python -m tools.playback <session_name> --loop      # Loop playback
-    python -m tools.playback <session_name> --export    # Export to MP4
 
 Controls during playback:
     Mouse drag  - Rotate camera (full 360°)
@@ -396,79 +395,6 @@ class PlaybackApp:
         pygame.quit()
 
 
-def export_video(session_name: str, fps: int = 30, output_path: str = None):
-    """Export recording to MP4 video."""
-    try:
-        import cv2
-    except ImportError:
-        print("[Export] Error: opencv-python required for video export")
-        print("[Export] Install with: pip install opencv-python")
-        return
-    
-    rec_dir = get_recording_dir(session_name)
-    metadata = load_metadata(rec_dir)
-    frame_count = get_frame_count(rec_dir)
-    
-    if output_path is None:
-        output_path = str(rec_dir / f"{session_name}.mp4")
-    
-    print(f"[Export] Exporting {frame_count} frames to {output_path}")
-    
-    pygame.init()
-    width, height = 1920, 1080
-    pygame.display.set_mode((width, height), DOUBLEBUF | OPENGL)
-    
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-    
-    glClearColor(0.0, 0.0, 0.02, 1.0)
-    glEnable(GL_DEPTH_TEST)
-    glMatrixMode(GL_PROJECTION)
-    glLoadIdentity()
-    gluPerspective(75.0, width / height, 0.1, 10000.0)
-    glMatrixMode(GL_MODELVIEW)
-    
-    camera = PlaybackCamera()
-    
-    for i in range(frame_count):
-        positions, colors = load_frame(rec_dir, i)
-        
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        camera.apply()
-        
-        glEnable(GL_POINT_SMOOTH)
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE)
-        glPointSize(1.5)
-        
-        glEnableClientState(GL_VERTEX_ARRAY)
-        glEnableClientState(GL_COLOR_ARRAY)
-        glVertexPointer(3, GL_FLOAT, 0, positions)
-        glColorPointer(3, GL_FLOAT, 0, colors)
-        glDrawArrays(GL_POINTS, 0, len(positions))
-        glDisableClientState(GL_VERTEX_ARRAY)
-        glDisableClientState(GL_COLOR_ARRAY)
-        
-        glDisable(GL_BLEND)
-        
-        pygame.display.flip()
-        
-        pixels = glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE)
-        frame = np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 3)
-        frame = np.flipud(frame)
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        
-        video.write(frame)
-        
-        if (i + 1) % 10 == 0:
-            print(f"  Exported {i+1}/{frame_count}")
-        
-        camera.rotate(0.5, 0)
-    
-    video.release()
-    pygame.quit()
-    
-    print(f"[Export] ✓ Saved: {output_path}")
 
 
 def main():
@@ -476,14 +402,17 @@ def main():
     parser.add_argument("session", nargs="?", default="galaxy_1m", help="Recording session name")
     parser.add_argument("--fps", type=int, default=30, help="Playback FPS")
     parser.add_argument("--loop", action="store_true", help="Loop playback")
-    parser.add_argument("--export", action="store_true", help="Export to MP4")
+    parser.add_argument("--export", action="store_true", help="(Deprecated) Use: python -m tools.export")
     args = parser.parse_args()
     
     if args.export:
-        export_video(args.session, args.fps)
-    else:
-        app = PlaybackApp(args.session, fps=args.fps, loop=args.loop)
-        app.run()
+        print("[Playback] Export moved to dedicated tool!")
+        print(f"[Playback] Use: python -m tools.export {args.session}")
+        print("[Playback] Run: python -m tools.export --help for options")
+        return
+    
+    app = PlaybackApp(args.session, fps=args.fps, loop=args.loop)
+    app.run()
 
 
 if __name__ == "__main__":
