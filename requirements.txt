@@ -1,13 +1,17 @@
+# Core Dependencies
 pygame>=2.5.0
 PyOpenGL>=3.1.7
+PyOpenGL-accelerate>=3.1.7
 numpy>=1.24.0
 scipy>=1.11.0
+
+# Performance & JIT Compilation
 numba>=0.58.0
 
 # Optional GPU acceleration (install one based on your hardware):
 # Apple Silicon (Metal/MPS):
 #   pip install torch
-# NVIDIA (CUDA):
+# NVIDIA (CUDA) - Use conda for CUDA support:
+#   conda install -c conda-forge cudatoolkit numba
+# Or install PyTorch with CUDA:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu121
-# Or install Numba CUDA:
-#   conda install cudatoolkit numba

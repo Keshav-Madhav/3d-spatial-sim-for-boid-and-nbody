@@ -13,12 +13,15 @@ import subprocess
 import sys
 import time
 import os
-import select
-import termios
-import tty
 from pathlib import Path
 from threading import Thread
 from queue import Queue, Empty
+
+# Platform-specific imports
+if sys.platform != 'win32':
+    import select
+    import termios
+    import tty
 
 # Configuration
 DEBOUNCE_SECONDS = 3.0  # Shorter debounce for faster iteration
@@ -66,19 +69,34 @@ def get_changed_files(old_mtimes, new_mtimes):
 
 def input_listener(queue):
     """Background thread to listen for keyboard input."""
-    old_settings = termios.tcgetattr(sys.stdin)
-    try:
-        tty.setcbreak(sys.stdin.fileno())
-        while True:
-            if select.select([sys.stdin], [], [], 0.1)[0]:
-                char = sys.stdin.read(1)
-                queue.put(char)
-                if char == '\x03':  # Ctrl+C
-                    break
-    except Exception:
-        pass
-    finally:
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+    if sys.platform == 'win32':
+        # Windows implementation using msvcrt
+        import msvcrt
+        try:
+            while True:
+                if msvcrt.kbhit():
+                    char = msvcrt.getch().decode('utf-8', errors='ignore')
+                    queue.put(char)
+                    if char == '\x03':  # Ctrl+C
+                        break
+                time.sleep(0.1)
+        except Exception:
+            pass
+    else:
+        # Unix implementation using termios
+        old_settings = termios.tcgetattr(sys.stdin)
+        try:
+            tty.setcbreak(sys.stdin.fileno())
+            while True:
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    char = sys.stdin.read(1)
+                    queue.put(char)
+                    if char == '\x03':  # Ctrl+C
+                        break
+        except Exception:
+            pass
+        finally:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
 
 def start_process():
