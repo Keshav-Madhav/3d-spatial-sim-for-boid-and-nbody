@@ -4,12 +4,15 @@ GPU Backend Detection and Selection
 
 Automatically detects and uses the best available compute backend:
 1. CUDA (NVIDIA GPUs) - via Numba CUDA
-2. Metal/MPS (Apple Silicon) - via PyTorch MPS
-3. CPU (fallback) - via Numba parallel
+2. Metal Barnes-Hut (Apple Silicon) - via native Metal compute shaders
+3. Metal/MPS (Apple Silicon) - via PyTorch MPS (fallback brute-force)
+4. CPU (fallback) - via Numba parallel Barnes-Hut
 
-For N-body simulation, we use a hybrid approach:
-- Small body counts (<50K): Brute-force O(n²) on GPU (faster due to parallelism)
-- Large body counts (>50K): Tile-based approximation on GPU
+For N-body simulation:
+- CUDA: Tiled brute-force O(n²) for up to 100K bodies
+- Metal Barnes-Hut: O(n log n) for ANY body count (leverages UMA)
+- Metal MPS: Brute-force O(n²) for small counts only
+- CPU: Barnes-Hut O(n log n) as fallback
 """
 
 import os
@@ -25,7 +28,8 @@ warnings.filterwarnings('ignore')
 
 class Backend(Enum):
     CUDA = "cuda"
-    METAL = "metal"  # Apple Silicon via PyTorch MPS
+    METAL_BH = "metal_barnes_hut"  # Native Metal with Barnes-Hut (best for Apple Silicon)
+    METAL = "metal"                # PyTorch MPS brute-force (fallback)
     CPU = "cpu"
 
 
@@ -37,7 +41,12 @@ def detect_backend() -> Tuple[Backend, str]:
     if cuda_available:
         return Backend.CUDA, cuda_info
     
-    # Try Metal/MPS (Apple Silicon)
+    # Try native Metal Barnes-Hut (best for Apple Silicon)
+    metal_bh_available, metal_bh_info = _check_metal_barnes_hut()
+    if metal_bh_available:
+        return Backend.METAL_BH, metal_bh_info
+    
+    # Try Metal/MPS via PyTorch (fallback for Apple Silicon)
     metal_available, metal_info = _check_metal()
     if metal_available:
         return Backend.METAL, metal_info
@@ -61,6 +70,22 @@ def _check_cuda() -> Tuple[bool, str]:
     return False, ""
 
 
+def _check_metal_barnes_hut() -> Tuple[bool, str]:
+    """Check if native Metal Barnes-Hut backend is available."""
+    try:
+        from .metal import is_metal_available
+        available, info = is_metal_available()
+        if available:
+            return True, f"{info} (Barnes-Hut)"
+    except ImportError as e:
+        # Metal package not installed
+        pass
+    except Exception as e:
+        # Other errors
+        pass
+    return False, ""
+
+
 def _check_metal() -> Tuple[bool, str]:
     """Check if Metal/MPS is available via PyTorch."""
     try:
@@ -69,7 +94,7 @@ def _check_metal() -> Tuple[bool, str]:
             # Get Apple Silicon chip info
             import platform
             chip = platform.processor() or "Apple Silicon"
-            return True, f"Apple {chip} (MPS)"
+            return True, f"Apple {chip} (MPS brute-force)"
     except Exception:
         pass
     return False, ""
@@ -462,13 +487,14 @@ class MetalSimulation:
 # Body count thresholds for GPU vs CPU
 # GPU brute-force is O(n²), CPU Barnes-Hut is O(n log n)
 # GPU is faster for small n, CPU for large n
-CUDA_THRESHOLD = 100_000   # CUDA is fast even for large counts (RTX 4080 can handle 1M+)
-METAL_THRESHOLD = 5_000    # Metal brute-force slower than CPU Barnes-Hut after ~5K bodies
+CUDA_THRESHOLD = 100_000        # CUDA is fast even for large counts (RTX 4080 can handle 1M+)
+METAL_BH_THRESHOLD = 2_000_000  # Metal Barnes-Hut can handle millions (limited by RAM only)
+METAL_THRESHOLD = 5_000         # Metal MPS brute-force slower than CPU Barnes-Hut after ~5K
 
 
 def create_gpu_simulation(positions: np.ndarray, velocities: np.ndarray,
                           masses: np.ndarray, G: float, softening: float, 
-                          damping: float, force_gpu: bool = False):
+                          damping: float, theta: float = 0.5, force_gpu: bool = False):
     """Create the appropriate GPU simulation based on available backend.
     
     Args:
@@ -478,6 +504,7 @@ def create_gpu_simulation(positions: np.ndarray, velocities: np.ndarray,
         G: Gravitational constant
         softening: Softening length
         damping: Velocity damping
+        theta: Barnes-Hut opening angle (for Metal Barnes-Hut)
         force_gpu: If True, use GPU even if CPU would be faster
     
     Returns:
@@ -494,12 +521,31 @@ def create_gpu_simulation(positions: np.ndarray, velocities: np.ndarray,
             print(f"[GPU] {n:,} bodies exceeds CUDA threshold, using CPU Barnes-Hut")
             return None
     
+    elif backend == Backend.METAL_BH:
+        # Metal Barnes-Hut can handle very large counts efficiently
+        if n <= METAL_BH_THRESHOLD or force_gpu:
+            try:
+                from .metal import MetalBarnesHutSimulation
+                return MetalBarnesHutSimulation(
+                    positions, velocities, masses, G, softening, damping, theta
+                )
+            except Exception as e:
+                print(f"[GPU] Metal Barnes-Hut init failed: {e}")
+                # Try fallback to PyTorch MPS
+                try:
+                    return MetalSimulation(positions, velocities, masses, G, softening, damping)
+                except:
+                    return None
+        else:
+            print(f"[GPU] {n:,} bodies exceeds Metal threshold ({METAL_BH_THRESHOLD:,})")
+            return None
+    
     elif backend == Backend.METAL:
-        # Metal brute-force is only efficient for smaller counts
+        # Metal MPS brute-force is only efficient for smaller counts
         if n <= METAL_THRESHOLD or force_gpu:
             return MetalSimulation(positions, velocities, masses, G, softening, damping)
         else:
-            print(f"[GPU] {n:,} bodies exceeds Metal threshold ({METAL_THRESHOLD:,}), using CPU Barnes-Hut")
+            print(f"[GPU] {n:,} bodies exceeds Metal MPS threshold ({METAL_THRESHOLD:,}), using CPU Barnes-Hut")
             return None
     
     return None  # CPU fallback

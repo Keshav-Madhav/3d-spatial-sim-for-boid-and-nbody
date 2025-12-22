@@ -466,11 +466,15 @@ class NBodySimulation:
                     self.masses,
                     self.G,
                     self.softening,
-                    self.damping
+                    self.damping,
+                    theta=self.theta  # Pass theta for Barnes-Hut backends
                 )
                 if self._gpu_sim is not None:
                     self._use_gpu = True
+                    self._backend = backend
                     print(f"[NBody] GPU acceleration enabled: {backend.value}")
+                    if backend == Backend.METAL_BH:
+                        print(f"[NBody] Using Metal Barnes-Hut (θ={self.theta}, UMA zero-copy)")
                     return
         except ImportError as e:
             print(f"[NBody] GPU backend not available: {e}")
@@ -478,6 +482,7 @@ class NBodySimulation:
             print(f"[NBody] GPU init failed, using CPU: {e}")
         
         self._use_gpu = False
+        self._backend = Backend.CPU if 'Backend' in dir() else None
         print("[NBody] Using CPU backend (Barnes-Hut + Numba)")
     
     def _init_bodies(self, cfg):

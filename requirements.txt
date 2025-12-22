@@ -8,10 +8,21 @@ scipy>=1.11.0
 # Performance & JIT Compilation
 numba>=0.58.0
 
-# Optional GPU acceleration (install one based on your hardware):
-# Apple Silicon (Metal/MPS):
+# ============================================================================
+# GPU ACCELERATION OPTIONS (choose based on your hardware)
+# ============================================================================
+
+# Apple Silicon (M1/M2/M3/M4) - RECOMMENDED for Mac:
+# Native Metal with Barnes-Hut algorithm - supports 500K+ bodies efficiently
+# Uses Unified Memory Architecture (UMA) for zero-copy CPU-GPU data sharing
+#
+#   pip install pyobjc-framework-Metal pyobjc-framework-Cocoa
+#
+# Optional PyTorch MPS (fallback brute-force, smaller body counts):
 #   pip install torch
-# NVIDIA (CUDA) - Use conda for CUDA support:
+
+# NVIDIA GPUs (CUDA) - Use conda for CUDA support:
 #   conda install -c conda-forge cudatoolkit numba
 # Or install PyTorch with CUDA:
+# Install PyTorch with CUDA support:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu121
