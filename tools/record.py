@@ -23,6 +23,7 @@ import os
 import sys
 import json
 import time
+import shutil
 import argparse
 import numpy as np
 from datetime import datetime, timedelta
@@ -262,15 +263,33 @@ def format_eta(seconds: float) -> str:
 
 
 def print_progress(frame: int, total: int, frame_time: float, elapsed: float, eta: float):
-    """Print progress for each frame on its own line."""
+    """Print progress bar (full width) and details on two lines, overwriting in place."""
     pct = (frame + 1) / total * 100
-    bar_width = 20
+    
+    # Get terminal width, default to 80 if can't detect
+    try:
+        term_width = shutil.get_terminal_size().columns
+    except:
+        term_width = 80
+    
+    # Progress bar on first line (full width minus brackets)
+    bar_width = term_width - 2  # Account for [ and ]
     filled = int(bar_width * (frame + 1) / total)
     bar = "█" * filled + "░" * (bar_width - filled)
     
-    print(f"[{bar}] {pct:5.1f}% | Frame {frame+1:4d}/{total} | "
-          f"Time: {format_time(frame_time, short=True):>6s} | Elapsed: {format_time(elapsed):>6s} | "
-          f"ETA: {format_eta(eta)}")
+    # Details on second line
+    details = (f"{pct:5.1f}% | Frame {frame+1:4d}/{total} | "
+               f"Time: {format_time(frame_time, short=True):>6s} | "
+               f"Elapsed: {format_time(elapsed):>6s} | ETA: {format_eta(eta)}")
+    
+    # Move cursor up 2 lines, clear, and print both lines
+    # Use ANSI escape codes: \033[2A moves up 2 lines, \033[K clears line
+    if frame > 0:
+        sys.stdout.write("\033[2A")  # Move up 2 lines
+    
+    sys.stdout.write(f"\033[K[{bar}]\n")  # Clear line and print bar
+    sys.stdout.write(f"\033[K{details}\n")  # Clear line and print details
+    sys.stdout.flush()
 
 
 def _generate_initial_conditions(config: dict):
@@ -564,8 +583,35 @@ def list_recordings():
     print()
 
 
+def estimate_render_time(bodies: int, theta: float, frames: int, substeps: int) -> str:
+    """Estimate render time based on parameters."""
+    import math
+    base_bodies = 100_000
+    base_theta = 0.8
+    base_time_ms = 70  # ms per physics step from benchmark
+    
+    body_factor = (bodies * math.log(bodies)) / (base_bodies * math.log(base_bodies))
+    theta_factor = (base_theta / min(theta, 1.5)) ** 2
+    time_per_step_ms = base_time_ms * body_factor * theta_factor
+    total_steps = frames * substeps
+    seconds = time_per_step_ms * total_steps / 1000
+    
+    if seconds < 45:
+        return f"~{int(seconds)} seconds"
+    elif seconds < 90:
+        return "~1 minute"
+    elif seconds < 150:
+        return "~2 minutes"
+    elif seconds < 3600:
+        return f"~{seconds / 60:.0f} minutes"
+    elif seconds < 7200:
+        return "~1 hour"
+    else:
+        return f"~{seconds / 3600:.0f} hours"
+
+
 def select_preset_interactive() -> dict:
-    """Show preset menu and get user selection."""
+    """Show preset menu and get user selection with optional overrides."""
     print_preset_menu()
     
     presets = get_preset_list()
@@ -589,7 +635,61 @@ def select_preset_interactive() -> dict:
                 print(f"  Distribution: {config['distribution']}")
                 print(f"  Bodies: {config['num_bodies']:,}")
                 print(f"  Frames: {config['total_frames']}")
+                print(f"  Theta: {config['theta']}")
                 print(f"  Estimated time: {preset.get('estimated_time', 'unknown')}")
+                
+                # Optional overrides
+                print(f"\n  ─── Optional Overrides (press Enter to skip) ───")
+                
+                # Bodies override
+                bodies_input = input(f"  Bodies [{config['num_bodies']:,}]: ").strip()
+                if bodies_input:
+                    try:
+                        new_bodies = parse_number(bodies_input)
+                        if new_bodies > 0:
+                            config['num_bodies'] = new_bodies
+                            print(f"    → Bodies set to {new_bodies:,}")
+                    except ValueError:
+                        print(f"    → Invalid, keeping {config['num_bodies']:,}")
+                
+                # Frames override
+                frames_input = input(f"  Frames [{config['total_frames']}]: ").strip()
+                if frames_input:
+                    try:
+                        new_frames = int(frames_input)
+                        if new_frames > 0:
+                            config['total_frames'] = new_frames
+                            print(f"    → Frames set to {new_frames}")
+                    except ValueError:
+                        print(f"    → Invalid, keeping {config['total_frames']}")
+                
+                # Theta override
+                theta_input = input(f"  Theta [{config['theta']}]: ").strip()
+                if theta_input:
+                    try:
+                        new_theta = float(theta_input)
+                        if 0.1 <= new_theta <= 2.0:
+                            config['theta'] = new_theta
+                            print(f"    → Theta set to {new_theta}")
+                        else:
+                            print(f"    → Theta must be 0.1-2.0, keeping {config['theta']}")
+                    except ValueError:
+                        print(f"    → Invalid, keeping {config['theta']}")
+                
+                # Recalculate time estimate
+                new_estimate = estimate_render_time(
+                    config['num_bodies'], 
+                    config['theta'], 
+                    config['total_frames'], 
+                    config.get('substeps', 1)
+                )
+                
+                # Show final config
+                print(f"\n  ─── Final Configuration ───")
+                print(f"  Bodies: {config['num_bodies']:,}")
+                print(f"  Frames: {config['total_frames']}")
+                print(f"  Theta: {config['theta']}")
+                print(f"  Estimated time: {new_estimate}")
                 
                 confirm = input("\n  Start recording? [Y/n]: ").strip().lower()
                 if confirm in ['', 'y', 'yes']:
@@ -606,14 +706,31 @@ def select_preset_interactive() -> dict:
             return None
 
 
+def parse_number(value: str) -> int:
+    """Parse number with optional suffix (k, m, K, M)."""
+    value = value.strip().lower()
+    multipliers = {'k': 1_000, 'm': 1_000_000}
+    
+    for suffix, mult in multipliers.items():
+        if value.endswith(suffix):
+            return int(float(value[:-1]) * mult)
+    
+    return int(value)
+
+
 def main():
     parser = argparse.ArgumentParser(description="N-Body offline renderer")
-    parser.add_argument("session", nargs="?", help="Session name (for --resume or --status)")
+    parser.add_argument("session", nargs="?", help="Session name (for --resume, --status, or --extend)")
     parser.add_argument("--resume", action="store_true", help="Resume interrupted recording")
+    parser.add_argument("--extend", type=int, metavar="FRAMES", help="Extend existing recording by N frames (e.g., --extend 3000)")
     parser.add_argument("--status", action="store_true", help="Show recording status")
     parser.add_argument("--list", action="store_true", help="List all recordings")
     parser.add_argument("--preset", type=str, help="Use preset by name (e.g., 'quick_galaxy')")
     parser.add_argument("--preset-id", type=int, help="Use preset by index number")
+    parser.add_argument("--bodies", "-n", type=str, help="Override number of bodies (e.g., 100000, 100k, 1m)")
+    parser.add_argument("--frames", "-f", type=int, help="Override number of frames")
+    parser.add_argument("--theta", "-t", type=float, help="Override Barnes-Hut theta (0.3-1.5)")
+    parser.add_argument("--dt", type=float, help="Override time step")
     args = parser.parse_args()
     
     if args.list:
@@ -626,6 +743,52 @@ def main():
             show_status(args.session)
         else:
             list_recordings()
+        return
+    
+    # Handle extend (add more frames to existing recording)
+    if args.extend:
+        if not args.session:
+            print("[Record] Error: --extend requires a session name")
+            print("[Record] Usage: python -m tools.record --extend 3000 bar_galaxy")
+            return
+        
+        session_name = args.session
+        rec_dir = get_recording_dir(session_name)
+        
+        if not (rec_dir / "metadata.json").exists():
+            print(f"[Record] No recording found: {session_name}")
+            return
+        
+        # Load and update metadata
+        config = load_metadata(rec_dir)
+        old_frames = config["total_frames"]
+        new_frames = old_frames + args.extend
+        
+        completed = get_completed_frames(rec_dir)
+        
+        print(f"[Record] Extending '{session_name}'")
+        print(f"  Current frames: {completed}/{old_frames}")
+        print(f"  Adding: +{args.extend} frames")
+        print(f"  New total: {new_frames} frames")
+        
+        # Calculate new time estimate
+        new_estimate = estimate_render_time(
+            config['num_bodies'],
+            config['theta'],
+            args.extend,  # Only estimate time for new frames
+            config.get('substeps', 1)
+        )
+        print(f"  Estimated time for new frames: {new_estimate}")
+        
+        # Update and save metadata
+        config["total_frames"] = new_frames
+        with open(rec_dir / "metadata.json", "w") as f:
+            json.dump(config, f, indent=2)
+        
+        print(f"\n[Record] ✓ Updated metadata. Now resuming...")
+        
+        config["session_name"] = session_name
+        record(config, resume=True)
         return
     
     # Handle resume
@@ -688,6 +851,27 @@ def main():
         config = select_preset_interactive()
         if config is None:
             return
+    
+    # Apply overrides from command line
+    if args.bodies:
+        try:
+            config["num_bodies"] = parse_number(args.bodies)
+            print(f"[Record] Override: {config['num_bodies']:,} bodies")
+        except ValueError:
+            print(f"[Record] Invalid bodies value: {args.bodies}")
+            return
+    
+    if args.frames:
+        config["total_frames"] = args.frames
+        print(f"[Record] Override: {args.frames} frames")
+    
+    if args.theta:
+        config["theta"] = args.theta
+        print(f"[Record] Override: θ={args.theta}")
+    
+    if args.dt:
+        config["dt"] = args.dt
+        print(f"[Record] Override: dt={args.dt}")
     
     record(config, resume=False)
 

@@ -422,7 +422,7 @@ PRESETS["galaxy_epic"] = {
     "dt_per_frame": 0.12,
     "substeps": 3,
     "target_fps": 24,
-    "estimated_time": "~2 hours",
+    "estimated_time": "~1 hour",
 }
 
 PRESETS["collision_majesty"] = {
@@ -440,7 +440,7 @@ PRESETS["collision_majesty"] = {
     "dt_per_frame": 0.15,
     "substeps": 3,
     "target_fps": 24,
-    "estimated_time": "~3 hours",
+    "estimated_time": "~1 hour",
 }
 
 PRESETS["spiral_milkyway"] = {
@@ -458,7 +458,7 @@ PRESETS["spiral_milkyway"] = {
     "dt_per_frame": 0.1,
     "substeps": 3,
     "target_fps": 24,
-    "estimated_time": "~1.5 hours",
+    "estimated_time": "~30 minutes",
 }
 
 PRESETS["bar_galaxy"] = {
@@ -476,7 +476,248 @@ PRESETS["bar_galaxy"] = {
     "dt_per_frame": 0.12,
     "substeps": 3,
     "target_fps": 24,
-    "estimated_time": "~1.5 hours",
+    "estimated_time": "~30 minutes",
+}
+
+# -----------------------------------------------------------------------------
+# CINEMATIC 4K PRESETS (Ultra quality, 60fps, high accuracy, long renders)
+# For 4K 60fps footage - slow dt to prevent sped-up feel, high substeps
+# -----------------------------------------------------------------------------
+
+PRESETS["4k_galaxy_500k"] = {
+    "name": "4K Galaxy 500K",
+    "description": "500K body galaxy, 4K 60fps quality, high accuracy",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 500_000,
+    "theta": 0.5,  # High accuracy
+    "G": 0.08,
+    "softening": 1.5,
+    "damping": 1.0,
+    "spawn_radius": 600.0,
+    "distribution": "galaxy",
+    "total_frames": 3600,  # 1 minute at 60fps
+    "dt_per_frame": 0.05,  # Slow motion - won't feel sped up
+    "substeps": 5,  # Smooth physics
+    "target_fps": 60,
+    "estimated_time": "~5 hours",
+}
+
+PRESETS["4k_galaxy_1m"] = {
+    "name": "4K Galaxy 1M",
+    "description": "1 million body galaxy, ultra cinematic",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 1_000_000,
+    "theta": 0.5,
+    "G": 0.07,
+    "softening": 1.5,
+    "damping": 1.0,
+    "spawn_radius": 800.0,
+    "distribution": "galaxy",
+    "total_frames": 3600,
+    "dt_per_frame": 0.05,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~11 hours",
+}
+
+PRESETS["4k_collision_500k"] = {
+    "name": "4K Collision 500K",
+    "description": "Two galaxies colliding, 4K 60fps, high accuracy",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 500_000,
+    "theta": 0.5,
+    "G": 0.1,
+    "softening": 1.5,
+    "damping": 1.0,
+    "spawn_radius": 700.0,
+    "distribution": "collision",
+    "total_frames": 6000,  # 100 seconds at 60fps
+    "dt_per_frame": 0.06,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~9 hours",
+}
+
+PRESETS["4k_collision_1m"] = {
+    "name": "4K Collision 1M",
+    "description": "Epic 1M body collision, production quality",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 1_000_000,
+    "theta": 0.5,
+    "G": 0.08,
+    "softening": 1.5,
+    "damping": 1.0,
+    "spawn_radius": 900.0,
+    "distribution": "collision",
+    "total_frames": 6000,
+    "dt_per_frame": 0.06,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~18 hours",
+}
+
+PRESETS["4k_spiral_500k"] = {
+    "name": "4K Spiral 500K",
+    "description": "Multi-arm spiral galaxy, 4K 60fps",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 500_000,
+    "theta": 0.5,
+    "G": 0.06,
+    "softening": 1.5,
+    "damping": 1.0,
+    "spawn_radius": 650.0,
+    "distribution": "spiral",
+    "total_frames": 3600,
+    "dt_per_frame": 0.05,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~5 hours",
+}
+
+PRESETS["4k_spiral_1m"] = {
+    "name": "4K Spiral 1M",
+    "description": "Stunning 1M body spiral, ultra smooth",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 1_000_000,
+    "theta": 0.5,
+    "G": 0.05,
+    "softening": 1.5,
+    "damping": 1.0,
+    "spawn_radius": 850.0,
+    "distribution": "spiral",
+    "total_frames": 3600,
+    "dt_per_frame": 0.05,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~11 hours",
+}
+
+PRESETS["4k_cluster_300k"] = {
+    "name": "4K Globular Cluster",
+    "description": "Dense star cluster, ultra accurate physics",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 300_000,
+    "theta": 0.4,  # Very accurate
+    "G": 0.05,
+    "softening": 1.0,
+    "damping": 1.0,
+    "spawn_radius": 300.0,
+    "distribution": "cluster",
+    "total_frames": 3600,
+    "dt_per_frame": 0.04,
+    "substeps": 6,  # Very smooth
+    "target_fps": 60,
+    "estimated_time": "~6 hours",
+}
+
+PRESETS["4k_ring_400k"] = {
+    "name": "4K Saturn Rings",
+    "description": "Beautiful ring system, cinematic quality",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 400_000,
+    "theta": 0.5,
+    "G": 0.06,
+    "softening": 1.0,
+    "damping": 1.0,
+    "spawn_radius": 400.0,
+    "distribution": "ring",
+    "total_frames": 3600,
+    "dt_per_frame": 0.05,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~4 hours",
+}
+
+PRESETS["4k_binary_300k"] = {
+    "name": "4K Binary System",
+    "description": "Binary stars with disks, ultra smooth",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 300_000,
+    "theta": 0.5,
+    "G": 0.12,
+    "softening": 1.0,
+    "damping": 1.0,
+    "spawn_radius": 400.0,
+    "distribution": "binary",
+    "total_frames": 3600,
+    "dt_per_frame": 0.05,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~3 hours",
+}
+
+# Long-form cinematic (2+ minutes at 60fps)
+
+PRESETS["4k_galaxy_long"] = {
+    "name": "4K Galaxy Long",
+    "description": "Extended 2-minute galaxy evolution at 60fps",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 500_000,
+    "theta": 0.55,
+    "G": 0.07,
+    "softening": 1.5,
+    "damping": 1.0,
+    "spawn_radius": 650.0,
+    "distribution": "galaxy",
+    "total_frames": 7200,  # 2 minutes at 60fps
+    "dt_per_frame": 0.05,
+    "substeps": 4,
+    "target_fps": 60,
+    "estimated_time": "~7 hours",
+}
+
+PRESETS["4k_collision_epic"] = {
+    "name": "4K Collision Epic",
+    "description": "3-minute collision drama at 60fps",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 600_000,
+    "theta": 0.55,
+    "G": 0.09,
+    "softening": 1.5,
+    "damping": 1.0,
+    "spawn_radius": 800.0,
+    "distribution": "collision",
+    "total_frames": 10800,  # 3 minutes at 60fps
+    "dt_per_frame": 0.06,
+    "substeps": 4,
+    "target_fps": 60,
+    "estimated_time": "~12 hours",
+}
+
+PRESETS["4k_vortex_artistic"] = {
+    "name": "4K Cosmic Vortex",
+    "description": "Artistic swirling vortex, high frame count",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 400_000,
+    "theta": 0.5,
+    "G": 0.06,
+    "softening": 1.5,
+    "damping": 0.998,
+    "spawn_radius": 500.0,
+    "distribution": "vortex",
+    "total_frames": 6000,
+    "dt_per_frame": 0.06,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~7 hours",
+}
+
+PRESETS["4k_supernova_burst"] = {
+    "name": "4K Supernova",
+    "description": "Explosive supernova at 60fps, high detail",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 350_000,
+    "theta": 0.5,
+    "G": 0.04,
+    "softening": 1.0,
+    "damping": 0.995,
+    "spawn_radius": 150.0,
+    "distribution": "explosion",
+    "total_frames": 3600,
+    "dt_per_frame": 0.05,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~3 hours",
 }
 
 # -----------------------------------------------------------------------------
@@ -498,7 +739,7 @@ PRESETS["quick_galaxy"] = {
     "dt_per_frame": 0.2,
     "substeps": 1,
     "target_fps": 30,
-    "estimated_time": "~3 minutes",
+    "estimated_time": "~25 seconds",
 }
 
 PRESETS["quick_collision"] = {
@@ -516,7 +757,7 @@ PRESETS["quick_collision"] = {
     "dt_per_frame": 0.25,
     "substeps": 1,
     "target_fps": 30,
-    "estimated_time": "~4 minutes",
+    "estimated_time": "~25 seconds",
 }
 
 PRESETS["mini_cluster"] = {
@@ -534,7 +775,7 @@ PRESETS["mini_cluster"] = {
     "dt_per_frame": 0.15,
     "substeps": 1,
     "target_fps": 30,
-    "estimated_time": "~2 minutes",
+    "estimated_time": "~10 seconds",
 }
 
 PRESETS["instant_ring"] = {
@@ -552,7 +793,7 @@ PRESETS["instant_ring"] = {
     "dt_per_frame": 0.2,
     "substeps": 1,
     "target_fps": 30,
-    "estimated_time": "~1 minute",
+    "estimated_time": "~10 seconds",
 }
 
 # -----------------------------------------------------------------------------
@@ -574,7 +815,7 @@ PRESETS["accurate_cluster"] = {
     "dt_per_frame": 0.08,
     "substeps": 4,
     "target_fps": 24,
-    "estimated_time": "~4 hours",
+    "estimated_time": "~50 minutes",
 }
 
 PRESETS["elliptical_galaxy"] = {
@@ -592,7 +833,7 @@ PRESETS["elliptical_galaxy"] = {
     "dt_per_frame": 0.1,
     "substeps": 3,
     "target_fps": 24,
-    "estimated_time": "~3 hours",
+    "estimated_time": "~35 minutes",
 }
 
 PRESETS["binary_stars"] = {
@@ -610,7 +851,7 @@ PRESETS["binary_stars"] = {
     "dt_per_frame": 0.1,
     "substeps": 3,
     "target_fps": 24,
-    "estimated_time": "~2 hours",
+    "estimated_time": "~11 minutes",
 }
 
 PRESETS["tidal_stream"] = {
@@ -628,7 +869,7 @@ PRESETS["tidal_stream"] = {
     "dt_per_frame": 0.15,
     "substeps": 2,
     "target_fps": 24,
-    "estimated_time": "~1 hour",
+    "estimated_time": "~3 minutes",
 }
 
 # -----------------------------------------------------------------------------
@@ -650,7 +891,7 @@ PRESETS["supernova"] = {
     "dt_per_frame": 0.1,
     "substeps": 2,
     "target_fps": 30,
-    "estimated_time": "~30 minutes",
+    "estimated_time": "~3 minutes",
 }
 
 PRESETS["cosmic_vortex"] = {
@@ -668,7 +909,7 @@ PRESETS["cosmic_vortex"] = {
     "dt_per_frame": 0.12,
     "substeps": 2,
     "target_fps": 30,
-    "estimated_time": "~1 hour",
+    "estimated_time": "~6 minutes",
 }
 
 PRESETS["triple_collision"] = {
@@ -686,7 +927,7 @@ PRESETS["triple_collision"] = {
     "dt_per_frame": 0.15,
     "substeps": 2,
     "target_fps": 24,
-    "estimated_time": "~1.5 hours",
+    "estimated_time": "~14 minutes",
 }
 
 PRESETS["gravity_bomb"] = {
@@ -704,7 +945,7 @@ PRESETS["gravity_bomb"] = {
     "dt_per_frame": 0.1,
     "substeps": 2,
     "target_fps": 30,
-    "estimated_time": "~30 minutes",
+    "estimated_time": "~3 minutes",
 }
 
 # -----------------------------------------------------------------------------
@@ -726,7 +967,7 @@ PRESETS["nebula_birth"] = {
     "dt_per_frame": 0.12,
     "substeps": 2,
     "target_fps": 24,
-    "estimated_time": "~1 hour",
+    "estimated_time": "~8 minutes",
 }
 
 PRESETS["saturn_rings"] = {
@@ -744,7 +985,7 @@ PRESETS["saturn_rings"] = {
     "dt_per_frame": 0.1,
     "substeps": 2,
     "target_fps": 24,
-    "estimated_time": "~1 hour",
+    "estimated_time": "~10 minutes",
 }
 
 PRESETS["shell_collapse"] = {
@@ -762,7 +1003,7 @@ PRESETS["shell_collapse"] = {
     "dt_per_frame": 0.12,
     "substeps": 2,
     "target_fps": 24,
-    "estimated_time": "~45 minutes",
+    "estimated_time": "~5 minutes",
 }
 
 PRESETS["cosmic_web"] = {
@@ -780,7 +1021,7 @@ PRESETS["cosmic_web"] = {
     "dt_per_frame": 0.15,
     "substeps": 2,
     "target_fps": 24,
-    "estimated_time": "~1 hour",
+    "estimated_time": "~6 minutes",
 }
 
 # -----------------------------------------------------------------------------
@@ -802,7 +1043,7 @@ PRESETS["million_stars"] = {
     "dt_per_frame": 0.15,
     "substeps": 2,
     "target_fps": 24,
-    "estimated_time": "~6 hours",
+    "estimated_time": "~40 minutes",
 }
 
 PRESETS["mega_collision"] = {
@@ -820,7 +1061,173 @@ PRESETS["mega_collision"] = {
     "dt_per_frame": 0.15,
     "substeps": 2,
     "target_fps": 24,
-    "estimated_time": "~10 hours",
+    "estimated_time": "~1 hour",
+}
+
+# -----------------------------------------------------------------------------
+# EXTREME PRESETS (5M+ bodies, long offline renders)
+# -----------------------------------------------------------------------------
+
+PRESETS["extreme_5m_galaxy"] = {
+    "name": "5 Million Star Galaxy",
+    "description": "Massive galaxy with 5M bodies, approximate physics",
+    "category": "EXTREME",
+    "num_bodies": 5_000_000,
+    "theta": 1.2,  # Very approximate for speed
+    "G": 0.08,
+    "softening": 5.0,
+    "damping": 1.0,
+    "spawn_radius": 1200.0,
+    "distribution": "galaxy",
+    "total_frames": 500,
+    "dt_per_frame": 0.2,
+    "substeps": 1,
+    "target_fps": 20,
+    "estimated_time": "~17 minutes",
+}
+
+PRESETS["extreme_5m_collision"] = {
+    "name": "5 Million Collision",
+    "description": "Epic collision with 5M bodies",
+    "category": "EXTREME",
+    "num_bodies": 5_000_000,
+    "theta": 1.2,
+    "G": 0.1,
+    "softening": 5.0,
+    "damping": 1.0,
+    "spawn_radius": 1500.0,
+    "distribution": "collision",
+    "total_frames": 500,
+    "dt_per_frame": 0.2,
+    "substeps": 1,
+    "target_fps": 20,
+    "estimated_time": "~17 minutes",
+}
+
+PRESETS["extreme_5m_spiral"] = {
+    "name": "5 Million Spiral",
+    "description": "Gigantic spiral galaxy with 5M stars",
+    "category": "EXTREME",
+    "num_bodies": 5_000_000,
+    "theta": 1.2,
+    "G": 0.06,
+    "softening": 5.0,
+    "damping": 1.0,
+    "spawn_radius": 1400.0,
+    "distribution": "spiral",
+    "total_frames": 500,
+    "dt_per_frame": 0.2,
+    "substeps": 1,
+    "target_fps": 20,
+    "estimated_time": "~17 minutes",
+}
+
+PRESETS["extreme_10m_galaxy"] = {
+    "name": "10 Million Star Galaxy",
+    "description": "Ultra-massive galaxy with 10M bodies",
+    "category": "EXTREME",
+    "num_bodies": 10_000_000,
+    "theta": 1.3,  # More approximate
+    "G": 0.06,
+    "softening": 6.0,
+    "damping": 1.0,
+    "spawn_radius": 1600.0,
+    "distribution": "galaxy",
+    "total_frames": 500,
+    "dt_per_frame": 0.25,
+    "substeps": 1,
+    "target_fps": 20,
+    "estimated_time": "~30 minutes",
+}
+
+PRESETS["extreme_10m_collision"] = {
+    "name": "10 Million Collision",
+    "description": "Massive collision with 10M bodies",
+    "category": "EXTREME",
+    "num_bodies": 10_000_000,
+    "theta": 1.3,
+    "G": 0.08,
+    "softening": 6.0,
+    "damping": 1.0,
+    "spawn_radius": 2000.0,
+    "distribution": "collision",
+    "total_frames": 500,
+    "dt_per_frame": 0.25,
+    "substeps": 1,
+    "target_fps": 20,
+    "estimated_time": "~30 minutes",
+}
+
+PRESETS["extreme_20m_galaxy"] = {
+    "name": "20 Million Star Galaxy",
+    "description": "Hyper-massive galaxy with 20M bodies",
+    "category": "EXTREME",
+    "num_bodies": 20_000_000,
+    "theta": 1.4,  # Very coarse
+    "G": 0.05,
+    "softening": 8.0,
+    "damping": 1.0,
+    "spawn_radius": 2000.0,
+    "distribution": "galaxy",
+    "total_frames": 500,
+    "dt_per_frame": 0.3,
+    "substeps": 1,
+    "target_fps": 20,
+    "estimated_time": "~1 hour",
+}
+
+PRESETS["extreme_20m_spiral"] = {
+    "name": "20 Million Spiral",
+    "description": "Mega spiral galaxy with 20M stars",
+    "category": "EXTREME",
+    "num_bodies": 20_000_000,
+    "theta": 1.4,
+    "G": 0.04,
+    "softening": 8.0,
+    "damping": 1.0,
+    "spawn_radius": 2200.0,
+    "distribution": "spiral",
+    "total_frames": 500,
+    "dt_per_frame": 0.3,
+    "substeps": 1,
+    "target_fps": 20,
+    "estimated_time": "~1 hour",
+}
+
+PRESETS["extreme_50m_galaxy"] = {
+    "name": "50 Million Star Galaxy",
+    "description": "Insane 50M body galaxy - multi-day render",
+    "category": "EXTREME",
+    "num_bodies": 50_000_000,
+    "theta": 1.5,  # Maximum approximation
+    "G": 0.04,
+    "softening": 10.0,
+    "damping": 1.0,
+    "spawn_radius": 3000.0,
+    "distribution": "galaxy",
+    "total_frames": 500,
+    "dt_per_frame": 0.35,
+    "substeps": 1,
+    "target_fps": 20,
+    "estimated_time": "~2 hours",
+}
+
+PRESETS["extreme_50m_collision"] = {
+    "name": "50 Million Collision",
+    "description": "Ultimate collision with 50M bodies",
+    "category": "EXTREME",
+    "num_bodies": 50_000_000,
+    "theta": 1.5,
+    "G": 0.05,
+    "softening": 10.0,
+    "damping": 1.0,
+    "spawn_radius": 3500.0,
+    "distribution": "collision",
+    "total_frames": 500,
+    "dt_per_frame": 0.35,
+    "substeps": 1,
+    "target_fps": 20,
+    "estimated_time": "~2 hours",
 }
 
 # -----------------------------------------------------------------------------
@@ -842,7 +1249,7 @@ PRESETS["tiny_galaxy"] = {
     "dt_per_frame": 0.3,
     "substeps": 1,
     "target_fps": 30,
-    "estimated_time": "~30 seconds",
+    "estimated_time": "~3 seconds",
 }
 
 PRESETS["tiny_collision"] = {
@@ -860,7 +1267,7 @@ PRESETS["tiny_collision"] = {
     "dt_per_frame": 0.3,
     "substeps": 1,
     "target_fps": 30,
-    "estimated_time": "~45 seconds",
+    "estimated_time": "~5 seconds",
 }
 
 PRESETS["demo_cluster"] = {
@@ -878,7 +1285,7 @@ PRESETS["demo_cluster"] = {
     "dt_per_frame": 0.2,
     "substeps": 1,
     "target_fps": 30,
-    "estimated_time": "~1 minute",
+    "estimated_time": "~5 seconds",
 }
 
 
@@ -888,7 +1295,7 @@ PRESETS["demo_cluster"] = {
 
 def get_preset_list() -> List[Tuple[str, dict]]:
     """Get list of all presets sorted by category."""
-    category_order = ["TINY", "FAST", "CINEMATIC", "ARTISTIC", "SCIENTIFIC", "CHAOS", "MEGA"]
+    category_order = ["TINY", "FAST", "CINEMATIC", "CINEMATIC_4K", "ARTISTIC", "SCIENTIFIC", "CHAOS", "MEGA", "EXTREME"]
     
     sorted_presets = sorted(
         PRESETS.items(),

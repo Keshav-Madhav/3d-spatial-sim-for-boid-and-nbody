@@ -278,11 +278,11 @@ class VideoExporter:
         self.end_frame = min(self.end_frame, self.total_frames)
         self.export_frames = self.end_frame - self.start_frame
         
-        # Output path
+        # Output path - store in recordings/ folder directly (not inside session folder)
         if config.output_path:
             self.output_path = Path(config.output_path)
         else:
-            self.output_path = self.rec_dir / f"{session_name}.mp4"
+            self.output_path = self._get_unique_output_path(session_name)
         
         self.width, self.height = config.resolution
         self.camera = ExportCamera(config)
@@ -290,6 +290,22 @@ class VideoExporter:
         # Temp directory for frame export
         self.temp_dir = None
         self.use_pipe = True  # Pipe frames directly to FFmpeg
+    
+    def _get_unique_output_path(self, session_name: str) -> Path:
+        """Get unique output path, adding (1), (2), etc. if file exists."""
+        recordings_dir = PROJECT_ROOT / "recordings"
+        base_path = recordings_dir / f"{session_name}.mp4"
+        
+        if not base_path.exists():
+            return base_path
+        
+        # File exists, find next available number
+        counter = 1
+        while True:
+            new_path = recordings_dir / f"{session_name} ({counter}).mp4"
+            if not new_path.exists():
+                return new_path
+            counter += 1
     
     def _setup_opengl(self):
         """Initialize PyGame and OpenGL."""
@@ -582,8 +598,8 @@ def list_recordings():
         metadata = load_metadata(session_dir)
         frame_count = get_frame_count(session_dir)
         
-        # Check for existing export
-        export_path = session_dir / f"{session_dir.name}.mp4"
+        # Check for existing export (in recordings/ folder)
+        export_path = recordings_dir / f"{session_dir.name}.mp4"
         exported = "✓" if export_path.exists() else " "
         
         print(f"  [{exported}] {session_dir.name:30s} | {metadata['num_bodies']:>10,} bodies | {frame_count:>4} frames")

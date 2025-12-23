@@ -771,12 +771,12 @@ class Flock:
             glDisableClientState(GL_COLOR_ARRAY)
         else:
             # Fallback to immediate mode
-            glEnableClientState(GL_VERTEX_ARRAY)
-            glEnableClientState(GL_COLOR_ARRAY)
-            
-            glVertexPointer(3, GL_FLOAT, 0, self._vertices[:total_verts])
-            glColorPointer(3, GL_FLOAT, 0, self._vert_colors[:total_verts])
-            glDrawArrays(GL_TRIANGLES, 0, total_verts)
-            
-            glDisableClientState(GL_VERTEX_ARRAY)
-            glDisableClientState(GL_COLOR_ARRAY)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        
+        glVertexPointer(3, GL_FLOAT, 0, self._vertices[:total_verts])
+        glColorPointer(3, GL_FLOAT, 0, self._vert_colors[:total_verts])
+        glDrawArrays(GL_TRIANGLES, 0, total_verts)
+        
+        glDisableClientState(GL_VERTEX_ARRAY)
+        glDisableClientState(GL_COLOR_ARRAY)
