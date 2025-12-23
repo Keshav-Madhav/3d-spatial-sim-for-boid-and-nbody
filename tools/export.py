@@ -23,6 +23,9 @@ Camera Modes:
     orbit    - Slow horizontal orbit
     spiral   - Spiral around the simulation
     zoom     - Slow zoom in/out cycle
+    zoomout  - Constant zoom out
+    zoomin   - Constant zoom in
+    cinematic - Dramatic slow sweep
 """
 
 import os
@@ -214,11 +217,33 @@ class ExportCamera:
             self.theta = self.config.camera_initial_theta + frame_idx * speed * 0.5
             zoom_factor = 1.0 + 0.3 * np.sin(t * 2 * np.pi)
             self.radius = self.config.camera_radius * zoom_factor
+        elif mode == "zoomout":
+            # Constant zoom out (starts close, ends far)
+            self.theta = self.config.camera_initial_theta + frame_idx * speed * 0.2
+            # Zoom from 0.5x to 2.5x of initial radius
+            zoom_factor = 0.5 + 2.0 * t
+            self.radius = self.config.camera_radius * zoom_factor
+        elif mode == "zoomin":
+            # Constant zoom in (starts far, ends close)
+            self.theta = self.config.camera_initial_theta + frame_idx * speed * 0.2
+            # Zoom from 2.0x to 0.4x of initial radius
+            zoom_factor = 2.0 - 1.6 * t
+            self.radius = self.config.camera_radius * zoom_factor
         elif mode == "cinematic":
             # Dramatic slow sweep
             self.theta = self.config.camera_initial_theta + frame_idx * speed * 0.3
             self.phi = self.config.camera_initial_phi + 15 * np.sin(t * np.pi)
             self.radius = self.config.camera_radius * (1.0 - 0.2 * t)
+        elif mode == "flyby":
+            # Dramatic flyby - camera moves past the simulation
+            self.theta = self.config.camera_initial_theta + 90 * t
+            self.phi = self.config.camera_initial_phi - 20 + 40 * t
+            self.radius = self.config.camera_radius * (1.5 - 0.8 * np.sin(t * np.pi))
+        elif mode == "topdown":
+            # Top-down view with slow rotation
+            self.theta = self.config.camera_initial_theta + frame_idx * speed * 0.5
+            self.phi = 80  # Nearly top-down
+            self.radius = self.config.camera_radius * 1.2
     
     def get_position(self) -> np.ndarray:
         import math
@@ -631,36 +656,43 @@ Camera Modes:
   orbit     - Horizontal orbit (default)
   spiral    - Spiral motion
   zoom      - Zoom in/out cycle
+  zoomout   - Constant zoom out
+  zoomin    - Constant zoom in
   cinematic - Dramatic slow sweep
+  flyby     - Dramatic flyby
+  topdown   - Top-down rotating view
         """
     )
     
     parser.add_argument("session", nargs="?", help="Recording session name")
     parser.add_argument("--list", action="store_true", help="List available recordings")
+    parser.add_argument("-i", "--interactive", action="store_true", help="Interactive mode with prompts")
     
     # Video settings
-    parser.add_argument("--fps", type=int, default=30, help="Output FPS (default: 30)")
-    parser.add_argument("--resolution", type=str, default="1080p",
+    parser.add_argument("--fps", type=int, help="Output FPS (default: 30)")
+    parser.add_argument("--resolution", type=str,
                         choices=list(RESOLUTION_PRESETS.keys()),
                         help="Output resolution (default: 1080p)")
     
     # Quality settings
-    parser.add_argument("--quality", type=str, default="balanced",
+    parser.add_argument("--quality", type=str,
                         choices=list(QUALITY_PRESETS.keys()),
                         help="Quality preset (default: balanced)")
     parser.add_argument("--crf", type=int, help="Override CRF value (0-51, lower=better)")
-    parser.add_argument("--codec", type=str, default="h264",
+    parser.add_argument("--codec", type=str,
                         choices=["h264", "h265", "vp9"],
                         help="Video codec (default: h264)")
     
     # Camera settings
-    parser.add_argument("--camera", type=str, default="orbit",
-                        choices=["fixed", "orbit", "spiral", "zoom", "cinematic"],
+    parser.add_argument("--camera", type=str,
+                        choices=["fixed", "orbit", "spiral", "zoom", "zoomout", "zoomin", "cinematic", "flyby", "topdown"],
                         help="Camera animation mode (default: orbit)")
     parser.add_argument("--camera-speed", type=float, default=0.3,
                         help="Camera rotation speed in degrees/frame")
     parser.add_argument("--camera-radius", type=float, default=800.0,
                         help="Camera distance from center")
+    parser.add_argument("--camera-angle", type=float, default=25.0,
+                        help="Camera vertical angle (0=horizon, 90=top-down)")
     
     # Rendering settings
     parser.add_argument("--point-size", type=float, default=1.5,
@@ -681,38 +713,59 @@ Camera Modes:
     
     if not args.session:
         list_recordings()
-        print("Usage: python -m tools.export <session_name> [options]")
+        print("\nUsage: python -m tools.export <session_name> [options]")
+        print("       python -m tools.export <session_name> -i    (interactive mode)")
         print("       python -m tools.export --help for more options")
         return
     
-    # Build config
-    config = ExportConfig()
+    # Check if recording exists
+    rec_dir = get_recording_dir(args.session)
+    if not rec_dir.exists() or not (rec_dir / "metadata.json").exists():
+        print(f"[Export] Recording not found: {args.session}")
+        list_recordings()
+        return
     
+    # Interactive mode if -i flag or no options provided
+    use_interactive = args.interactive or (
+        args.fps is None and args.resolution is None and 
+        args.quality is None and args.camera is None
+    )
+    
+    if use_interactive:
+        config = interactive_export_config(args.session)
+        if config is None:
+            return
+    else:
+        # Build config from args
+        config = ExportConfig()
+        
     # Video settings
-    config.fps = args.fps
-    config.resolution = RESOLUTION_PRESETS[args.resolution]
-    
+        config.fps = args.fps or 30
+        config.resolution = RESOLUTION_PRESETS.get(args.resolution, (1920, 1080))
+        
     # Quality settings
-    quality = QUALITY_PRESETS[args.quality]
-    config.quality_preset = args.quality
-    config.crf = args.crf if args.crf is not None else quality["crf"]
-    config.encoding_preset = quality["encoding_preset"]
-    config.codec = args.codec
-    
-    # Camera settings
-    config.camera_mode = args.camera
-    config.camera_rotation_speed = args.camera_speed
-    config.camera_radius = args.camera_radius
-    
-    # Rendering
-    config.point_size = args.point_size
-    
+        quality_name = args.quality or "balanced"
+        quality = QUALITY_PRESETS[quality_name]
+        config.quality_preset = quality_name
+        config.crf = args.crf if args.crf is not None else quality["crf"]
+        config.encoding_preset = quality["encoding_preset"]
+        config.codec = args.codec or "h264"
+        
+        # Camera settings
+        config.camera_mode = args.camera or "orbit"
+        config.camera_rotation_speed = args.camera_speed
+        config.camera_radius = args.camera_radius
+        config.camera_initial_phi = args.camera_angle
+        
+        # Rendering
+        config.point_size = args.point_size
+        
     # Frame range
-    config.start_frame = args.start
-    config.end_frame = args.end
-    
+        config.start_frame = args.start
+        config.end_frame = args.end
+        
     # Output
-    config.output_path = args.output
+        config.output_path = args.output
     
     # Export
     try:
@@ -724,6 +777,189 @@ Camera Modes:
     except Exception as e:
         print(f"[Export] Error: {e}")
         raise
+
+
+# Camera mode descriptions for interactive menu
+CAMERA_MODES = {
+    "orbit": "Horizontal orbit around simulation",
+    "fixed": "Static camera position",
+    "spiral": "Spiral motion with vertical oscillation",
+    "zoom": "Zoom in/out cycle",
+    "zoomout": "Constant zoom out (close → far)",
+    "zoomin": "Constant zoom in (far → close)",
+    "cinematic": "Dramatic slow sweep with zoom",
+    "flyby": "Dramatic flyby past simulation",
+    "topdown": "Top-down rotating view",
+}
+
+
+def interactive_export_config(session_name: str) -> Optional[ExportConfig]:
+    """Interactive export configuration with prompts."""
+    rec_dir = get_recording_dir(session_name)
+    metadata = load_metadata(rec_dir)
+    frame_count = get_frame_count(rec_dir)
+    
+    print(f"\n{'=' * 60}")
+    print(f"  EXPORT: {session_name}")
+    print(f"{'=' * 60}")
+    print(f"  Bodies: {metadata.get('num_bodies', 'unknown'):,}")
+    print(f"  Frames: {frame_count}")
+    print(f"  Distribution: {metadata.get('distribution', 'unknown')}")
+    
+    config = ExportConfig()
+    
+    try:
+        # Camera mode selection
+        print(f"\n{'─' * 60}")
+        print("  CAMERA MODE")
+        print(f"{'─' * 60}")
+        for i, (mode, desc) in enumerate(CAMERA_MODES.items()):
+            marker = "→" if mode == "orbit" else " "
+            print(f"  {marker} [{i}] {mode:12s} - {desc}")
+        
+        camera_input = input(f"\n  Select camera [0-{len(CAMERA_MODES)-1}] (Enter=orbit): ").strip()
+        if camera_input:
+            try:
+                idx = int(camera_input)
+                if 0 <= idx < len(CAMERA_MODES):
+                    config.camera_mode = list(CAMERA_MODES.keys())[idx]
+                    print(f"    → Camera: {config.camera_mode}")
+            except ValueError:
+                if camera_input in CAMERA_MODES:
+                    config.camera_mode = camera_input
+                    print(f"    → Camera: {config.camera_mode}")
+        else:
+            config.camera_mode = "orbit"
+        
+        # Camera angle selection
+        print(f"\n{'─' * 60}")
+        print("  CAMERA ANGLE")
+        print(f"{'─' * 60}")
+        print("  Vertical viewing angle:")
+        print("    0°  - Horizon level (side view)")
+        print("    25° - Slight elevation (default)")
+        print("    45° - Diagonal view")
+        print("    90° - Top-down view")
+        angle_input = input(f"\n  Angle in degrees (Enter=25): ").strip()
+        if angle_input:
+            try:
+                config.camera_initial_phi = float(angle_input)
+                print(f"    → Angle: {config.camera_initial_phi}°")
+            except ValueError:
+                config.camera_initial_phi = 25.0
+        else:
+            config.camera_initial_phi = 25.0
+        
+        # FPS selection
+        print(f"\n{'─' * 60}")
+        print("  FPS")
+        print(f"{'─' * 60}")
+        print("  Common: 24 (cinema), 30 (standard), 60 (smooth), 120 (high)")
+        fps_input = input(f"  FPS (Enter=30): ").strip()
+        if fps_input:
+            try:
+                config.fps = int(fps_input)
+                print(f"    → FPS: {config.fps}")
+            except ValueError:
+                config.fps = 30
+        else:
+            config.fps = 30
+        
+        # Resolution selection
+        print(f"\n{'─' * 60}")
+        print("  RESOLUTION")
+        print(f"{'─' * 60}")
+        res_list = list(RESOLUTION_PRESETS.items())
+        for i, (name, (w, h)) in enumerate(res_list):
+            marker = "→" if name == "1080p" else " "
+            print(f"  {marker} [{i}] {name:10s} ({w}x{h})")
+        
+        res_input = input(f"\n  Select resolution [0-{len(res_list)-1}] (Enter=1080p): ").strip()
+        if res_input:
+            try:
+                idx = int(res_input)
+                if 0 <= idx < len(res_list):
+                    res_name = res_list[idx][0]
+                    config.resolution = RESOLUTION_PRESETS[res_name]
+                    print(f"    → Resolution: {res_name}")
+            except ValueError:
+                if res_input in RESOLUTION_PRESETS:
+                    config.resolution = RESOLUTION_PRESETS[res_input]
+        else:
+            config.resolution = (1920, 1080)
+        
+        # Quality selection
+        print(f"\n{'─' * 60}")
+        print("  QUALITY")
+        print(f"{'─' * 60}")
+        quality_list = list(QUALITY_PRESETS.items())
+        for i, (name, q) in enumerate(quality_list):
+            marker = "→" if name == "balanced" else " "
+            print(f"  {marker} [{i}] {name:10s} - {q['description']}")
+        
+        quality_input = input(f"\n  Select quality [0-{len(quality_list)-1}] (Enter=balanced): ").strip()
+        if quality_input:
+            try:
+                idx = int(quality_input)
+                if 0 <= idx < len(quality_list):
+                    quality_name = quality_list[idx][0]
+                    quality = QUALITY_PRESETS[quality_name]
+                    config.quality_preset = quality_name
+                    config.crf = quality["crf"]
+                    config.encoding_preset = quality["encoding_preset"]
+                    print(f"    → Quality: {quality_name}")
+            except ValueError:
+                pass
+        else:
+            config.quality_preset = "balanced"
+            config.crf = 23
+            config.encoding_preset = "medium"
+        
+        # Codec selection
+        print(f"\n{'─' * 60}")
+        print("  CODEC")
+        print(f"{'─' * 60}")
+        print("  → [0] h264    - Most compatible (default)")
+        print("    [1] h265    - Better compression, less compatible")
+        print("    [2] vp9     - Open format, good compression")
+        
+        codec_input = input(f"\n  Select codec [0-2] (Enter=h264): ").strip()
+        codecs = ["h264", "h265", "vp9"]
+        if codec_input:
+            try:
+                idx = int(codec_input)
+                if 0 <= idx < 3:
+                    config.codec = codecs[idx]
+                    print(f"    → Codec: {config.codec}")
+            except ValueError:
+                config.codec = "h264"
+        else:
+            config.codec = "h264"
+        
+        # Summary
+        print(f"\n{'=' * 60}")
+        print("  EXPORT SETTINGS")
+        print(f"{'=' * 60}")
+        print(f"  Session:    {session_name}")
+        print(f"  Camera:     {config.camera_mode} (angle: {config.camera_initial_phi}°)")
+        print(f"  FPS:        {config.fps}")
+        print(f"  Resolution: {config.resolution[0]}x{config.resolution[1]}")
+        print(f"  Quality:    {config.quality_preset}")
+        print(f"  Codec:      {config.codec}")
+        
+        duration = frame_count / config.fps
+        print(f"  Duration:   {duration:.1f}s ({frame_count} frames)")
+        
+        confirm = input(f"\n  Start export? [Y/n]: ").strip().lower()
+        if confirm in ['', 'y', 'yes']:
+            return config
+        else:
+            print("  Cancelled.")
+            return None
+            
+    except KeyboardInterrupt:
+        print("\n  Cancelled.")
+        return None
 
 
 if __name__ == "__main__":

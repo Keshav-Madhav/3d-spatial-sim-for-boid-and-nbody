@@ -324,7 +324,7 @@ def compute_colors_by_velocity(
     num_bodies: int,
     max_speed: float
 ):
-    """Color bodies based on velocity magnitude (blue=slow, white=fast)."""
+    """Color bodies based on velocity magnitude (deep blue → red heat map)."""
     for i in prange(num_bodies):
         speed = math.sqrt(
             velocities[i, 0] ** 2 + 
@@ -333,17 +333,50 @@ def compute_colors_by_velocity(
         )
         t = min(1.0, speed / max_speed)
         
-        # Color gradient: deep blue -> cyan -> white
-        if t < 0.5:
-            t2 = t * 2.0
-            colors[i, 0] = 0.1 + 0.2 * t2
-            colors[i, 1] = 0.2 + 0.6 * t2
-            colors[i, 2] = 0.8 + 0.2 * t2
-        else:
-            t2 = (t - 0.5) * 2.0
-            colors[i, 0] = 0.3 + 0.7 * t2
-            colors[i, 1] = 0.8 + 0.2 * t2
+        # Color gradient: deep blue → light blue → cyan → white → yellow → orange → red
+        # 0.0-0.2: deep blue → light blue
+        # 0.2-0.4: light blue → cyan
+        # 0.4-0.6: cyan → white
+        # 0.6-0.8: white → yellow
+        # 0.8-0.9: yellow → orange
+        # 0.9-1.0: orange → red (rare, only for extreme speeds)
+        
+        if t < 0.2:
+            # Deep blue (0.0, 0.1, 0.5) → Light blue (0.3, 0.5, 0.9)
+            s = t * 5.0
+            colors[i, 0] = 0.0 + 0.3 * s
+            colors[i, 1] = 0.1 + 0.4 * s
+            colors[i, 2] = 0.5 + 0.4 * s
+        elif t < 0.4:
+            # Light blue (0.3, 0.5, 0.9) → Cyan (0.2, 0.8, 1.0)
+            s = (t - 0.2) * 5.0
+            colors[i, 0] = 0.3 - 0.1 * s
+            colors[i, 1] = 0.5 + 0.3 * s
+            colors[i, 2] = 0.9 + 0.1 * s
+        elif t < 0.6:
+            # Cyan (0.2, 0.8, 1.0) → White (1.0, 1.0, 1.0)
+            s = (t - 0.4) * 5.0
+            colors[i, 0] = 0.2 + 0.8 * s
+            colors[i, 1] = 0.8 + 0.2 * s
             colors[i, 2] = 1.0
+        elif t < 0.8:
+            # White (1.0, 1.0, 1.0) → Yellow (1.0, 0.95, 0.0)
+            s = (t - 0.6) * 5.0
+            colors[i, 0] = 1.0
+            colors[i, 1] = 1.0 - 0.05 * s
+            colors[i, 2] = 1.0 - 1.0 * s
+        elif t < 0.9:
+            # Yellow (1.0, 0.95, 0.0) → Orange (1.0, 0.5, 0.0)
+            s = (t - 0.8) * 10.0
+            colors[i, 0] = 1.0
+            colors[i, 1] = 0.95 - 0.45 * s
+            colors[i, 2] = 0.0
+        else:
+            # Orange (1.0, 0.5, 0.0) → Red (1.0, 0.0, 0.0) - RARE!
+            s = (t - 0.9) * 10.0
+            colors[i, 0] = 1.0
+            colors[i, 1] = 0.5 - 0.5 * s
+            colors[i, 2] = 0.0
 
 
 @njit(parallel=True, fastmath=True, cache=True)

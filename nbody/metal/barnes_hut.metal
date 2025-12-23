@@ -157,14 +157,33 @@ kernel void compute_colors(
     float speed = length(vel);
     float t = clamp(speed / max_speed, 0.0f, 1.0f);
     
-    // Color gradient: deep blue → cyan → white
+    // Color gradient: deep blue → light blue → cyan → white → yellow → orange → red
     float3 color;
-    if (t < 0.5f) {
-        float t2 = t * 2.0f;
-        color = float3(0.1f + 0.2f * t2, 0.2f + 0.6f * t2, 0.8f + 0.2f * t2);
+    
+    if (t < 0.2f) {
+        // Deep blue (0.0, 0.1, 0.5) → Light blue (0.3, 0.5, 0.9)
+        float s = t * 5.0f;
+        color = float3(0.0f + 0.3f * s, 0.1f + 0.4f * s, 0.5f + 0.4f * s);
+    } else if (t < 0.4f) {
+        // Light blue (0.3, 0.5, 0.9) → Cyan (0.2, 0.8, 1.0)
+        float s = (t - 0.2f) * 5.0f;
+        color = float3(0.3f - 0.1f * s, 0.5f + 0.3f * s, 0.9f + 0.1f * s);
+    } else if (t < 0.6f) {
+        // Cyan (0.2, 0.8, 1.0) → White (1.0, 1.0, 1.0)
+        float s = (t - 0.4f) * 5.0f;
+        color = float3(0.2f + 0.8f * s, 0.8f + 0.2f * s, 1.0f);
+    } else if (t < 0.8f) {
+        // White (1.0, 1.0, 1.0) → Yellow (1.0, 0.95, 0.0)
+        float s = (t - 0.6f) * 5.0f;
+        color = float3(1.0f, 1.0f - 0.05f * s, 1.0f - 1.0f * s);
+    } else if (t < 0.9f) {
+        // Yellow (1.0, 0.95, 0.0) → Orange (1.0, 0.5, 0.0) - RARE
+        float s = (t - 0.8f) * 10.0f;
+        color = float3(1.0f, 0.95f - 0.45f * s, 0.0f);
     } else {
-        float t2 = (t - 0.5f) * 2.0f;
-        color = float3(0.3f + 0.7f * t2, 0.8f + 0.2f * t2, 1.0f);
+        // Orange (1.0, 0.5, 0.0) → Red (1.0, 0.0, 0.0) - EXTREMELY RARE!
+        float s = (t - 0.9f) * 10.0f;
+        color = float3(1.0f, 0.5f - 0.5f * s, 0.0f);
     }
     
     colors[idx] = float4(color, 1.0f);

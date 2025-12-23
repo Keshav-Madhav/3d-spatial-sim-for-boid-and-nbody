@@ -122,12 +122,22 @@ python -m tools.playback bar_galaxy --start 500
 
 ## Video Export
 
+### Interactive Mode (Recommended)
+```bash
+# Interactive export with menus
+python -m tools.export bar_galaxy
+
+# Or explicitly request interactive
+python -m tools.export bar_galaxy -i
+```
+
+### Command Line Options
 ```bash
 # List exportable recordings
 python -m tools.export --list
 
-# Basic export (1080p, 30fps, h264)
-python -m tools.export bar_galaxy
+# Basic export
+python -m tools.export bar_galaxy --fps 30 --resolution 1080p
 
 # High quality 4K export
 python -m tools.export bar_galaxy --resolution 4k --fps 60 --quality high
@@ -135,13 +145,17 @@ python -m tools.export bar_galaxy --resolution 4k --fps 60 --quality high
 # Codec options
 python -m tools.export bar_galaxy --codec h264    # Most compatible
 python -m tools.export bar_galaxy --codec h265    # Better compression
-python -m tools.export bar_galaxy --codec prores  # Professional (large files)
+python -m tools.export bar_galaxy --codec vp9     # Open format
 
-# Camera presets
-python -m tools.export bar_galaxy --camera static      # Fixed position
-python -m tools.export bar_galaxy --camera orbit       # Orbiting camera
-python -m tools.export bar_galaxy --camera cinematic   # Smooth movements
-python -m tools.export bar_galaxy --camera follow      # Follow center of mass
+# Camera modes
+python -m tools.export bar_galaxy --camera orbit      # Horizontal orbit (default)
+python -m tools.export bar_galaxy --camera fixed      # Static position
+python -m tools.export bar_galaxy --camera zoomout    # Constant zoom out
+python -m tools.export bar_galaxy --camera zoomin     # Constant zoom in
+python -m tools.export bar_galaxy --camera spiral     # Spiral motion
+python -m tools.export bar_galaxy --camera cinematic  # Dramatic sweep
+python -m tools.export bar_galaxy --camera flyby      # Flyby effect
+python -m tools.export bar_galaxy --camera topdown    # Top-down view
 
 # Full example
 python -m tools.export bar_galaxy \
@@ -214,6 +228,14 @@ python run_nbody.py --bodies 100000 --theta 0.8
 | `explosion` | Expanding supernova shell |
 | `vortex` | Swirling vortex structure |
 | `pleiades` | Star cluster with nebulosity |
+| `double_helix` | DNA-like double helix structure |
+| `accretion_disk` | Black hole accretion disk with jets |
+| `torus` | Donut-shaped torus |
+| `hourglass` | Binary star hourglass nebula |
+| `fibonacci` | Fibonacci spiral pattern |
+| `triple` | Three galaxies in triangle formation |
+| `rosette` | Flower-like orbital rosette |
+| `dyson` | Dyson sphere megastructure |
 
 ---
 

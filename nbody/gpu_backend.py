@@ -258,7 +258,7 @@ def _init_cuda_kernels():
     
     @cuda.jit(fastmath=True)
     def compute_colors_cuda(velocities, colors, n, max_speed):
-        """Compute colors based on velocity."""
+        """Compute colors based on velocity (deep blue → red heat map)."""
         i = cuda.grid(1)
         if i >= n:
             return
@@ -267,10 +267,43 @@ def _init_cuda_kernels():
         speed = math.sqrt(vx*vx + vy*vy + vz*vz)
         t = min(speed / max_speed, 1.0)
         
-        # Color gradient: blue -> cyan -> white
-        colors[i, 0] = 0.3 + 0.7 * t  # R
-        colors[i, 1] = 0.5 + 0.5 * t  # G
-        colors[i, 2] = 1.0            # B
+        # Color gradient: deep blue → light blue → cyan → white → yellow → orange → red
+        if t < 0.2:
+            # Deep blue → Light blue
+            s = t * 5.0
+            colors[i, 0] = 0.0 + 0.3 * s
+            colors[i, 1] = 0.1 + 0.4 * s
+            colors[i, 2] = 0.5 + 0.4 * s
+        elif t < 0.4:
+            # Light blue → Cyan
+            s = (t - 0.2) * 5.0
+            colors[i, 0] = 0.3 - 0.1 * s
+            colors[i, 1] = 0.5 + 0.3 * s
+            colors[i, 2] = 0.9 + 0.1 * s
+        elif t < 0.6:
+            # Cyan → White
+            s = (t - 0.4) * 5.0
+            colors[i, 0] = 0.2 + 0.8 * s
+            colors[i, 1] = 0.8 + 0.2 * s
+            colors[i, 2] = 1.0
+        elif t < 0.8:
+            # White → Yellow
+            s = (t - 0.6) * 5.0
+            colors[i, 0] = 1.0
+            colors[i, 1] = 1.0 - 0.05 * s
+            colors[i, 2] = 1.0 - 1.0 * s
+        elif t < 0.9:
+            # Yellow → Orange (rare)
+            s = (t - 0.8) * 10.0
+            colors[i, 0] = 1.0
+            colors[i, 1] = 0.95 - 0.45 * s
+            colors[i, 2] = 0.0
+        else:
+            # Orange → Red (extremely rare!)
+            s = (t - 0.9) * 10.0
+            colors[i, 0] = 1.0
+            colors[i, 1] = 0.5 - 0.5 * s
+            colors[i, 2] = 0.0
     
     return {
         'brute': compute_forces_brute_cuda,
@@ -453,14 +486,62 @@ class MetalSimulation:
         self.positions = self.positions + self.velocities * dt
     
     def compute_colors(self, max_speed: float):
-        """Compute colors based on velocity."""
+        """Compute colors based on velocity (deep blue → red heat map)."""
         import torch
         speed = torch.norm(self.velocities, dim=1)
         t = torch.clamp(speed / max_speed, 0, 1)
         
-        self.colors[:, 0] = 0.3 + 0.7 * t  # R
-        self.colors[:, 1] = 0.5 + 0.5 * t  # G
-        self.colors[:, 2] = 1.0            # B
+        # Color gradient: deep blue → light blue → cyan → white → yellow → orange → red
+        # Initialize colors
+        r = torch.zeros_like(t)
+        g = torch.zeros_like(t)
+        b = torch.zeros_like(t)
+        
+        # Deep blue → Light blue (0.0-0.2)
+        mask = t < 0.2
+        s = t[mask] * 5.0
+        r[mask] = 0.0 + 0.3 * s
+        g[mask] = 0.1 + 0.4 * s
+        b[mask] = 0.5 + 0.4 * s
+        
+        # Light blue → Cyan (0.2-0.4)
+        mask = (t >= 0.2) & (t < 0.4)
+        s = (t[mask] - 0.2) * 5.0
+        r[mask] = 0.3 - 0.1 * s
+        g[mask] = 0.5 + 0.3 * s
+        b[mask] = 0.9 + 0.1 * s
+        
+        # Cyan → White (0.4-0.6)
+        mask = (t >= 0.4) & (t < 0.6)
+        s = (t[mask] - 0.4) * 5.0
+        r[mask] = 0.2 + 0.8 * s
+        g[mask] = 0.8 + 0.2 * s
+        b[mask] = 1.0
+        
+        # White → Yellow (0.6-0.8)
+        mask = (t >= 0.6) & (t < 0.8)
+        s = (t[mask] - 0.6) * 5.0
+        r[mask] = 1.0
+        g[mask] = 1.0 - 0.05 * s
+        b[mask] = 1.0 - 1.0 * s
+        
+        # Yellow → Orange (0.8-0.9, rare)
+        mask = (t >= 0.8) & (t < 0.9)
+        s = (t[mask] - 0.8) * 10.0
+        r[mask] = 1.0
+        g[mask] = 0.95 - 0.45 * s
+        b[mask] = 0.0
+        
+        # Orange → Red (0.9-1.0, extremely rare!)
+        mask = t >= 0.9
+        s = (t[mask] - 0.9) * 10.0
+        r[mask] = 1.0
+        g[mask] = 0.5 - 0.5 * s
+        b[mask] = 0.0
+        
+        self.colors[:, 0] = r
+        self.colors[:, 1] = g
+        self.colors[:, 2] = b
     
     def get_positions(self) -> np.ndarray:
         """Copy positions back to CPU."""
