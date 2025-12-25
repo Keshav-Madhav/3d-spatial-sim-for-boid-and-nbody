@@ -258,7 +258,11 @@ def _init_cuda_kernels():
     
     @cuda.jit(fastmath=True)
     def compute_colors_cuda(velocities, colors, n, max_speed):
-        """Compute colors based on velocity (deep blue → red heat map)."""
+        """Compute colors based on velocity (deep blue → red heat map).
+        
+        White at 55%, Yellow at 90%, Orange at 95%, Red at 99%.
+        White dominates 55-90% range (most particles).
+        """
         i = cuda.grid(1)
         if i >= n:
             return
@@ -268,39 +272,49 @@ def _init_cuda_kernels():
         t = min(speed / max_speed, 1.0)
         
         # Color gradient: deep blue → light blue → cyan → white → yellow → orange → red
-        if t < 0.2:
-            # Deep blue → Light blue
-            s = t * 5.0
-            colors[i, 0] = 0.0 + 0.3 * s
-            colors[i, 1] = 0.1 + 0.4 * s
-            colors[i, 2] = 0.5 + 0.4 * s
-        elif t < 0.4:
-            # Light blue → Cyan
-            s = (t - 0.2) * 5.0
-            colors[i, 0] = 0.3 - 0.1 * s
-            colors[i, 1] = 0.5 + 0.3 * s
-            colors[i, 2] = 0.9 + 0.1 * s
-        elif t < 0.6:
-            # Cyan → White
-            s = (t - 0.4) * 5.0
-            colors[i, 0] = 0.2 + 0.8 * s
-            colors[i, 1] = 0.8 + 0.2 * s
+        if t < 0.55:
+            # Deep blue → Light blue → Cyan → White
+            if t < 0.4:
+                # Deep blue → Light blue
+                s = t / 0.4
+                colors[i, 0] = 0.0 + 0.3 * s
+                colors[i, 1] = 0.1 + 0.4 * s
+                colors[i, 2] = 0.5 + 0.4 * s
+            else:
+                # Light blue → Cyan → White
+                s = (t - 0.4) / 0.15
+                if s < 0.67:
+                    # Light blue → Cyan
+                    s2 = s / 0.67
+                    colors[i, 0] = 0.3 - 0.1 * s2
+                    colors[i, 1] = 0.5 + 0.3 * s2
+                    colors[i, 2] = 0.9 + 0.1 * s2
+                else:
+                    # Cyan → White
+                    s2 = (s - 0.67) / 0.33
+                    colors[i, 0] = 0.2 + 0.8 * s2
+                    colors[i, 1] = 0.8 + 0.2 * s2
+                    colors[i, 2] = 1.0
+        elif t < 0.90:
+            # White (PRIMARY RANGE)
+            colors[i, 0] = 1.0
+            colors[i, 1] = 1.0
             colors[i, 2] = 1.0
-        elif t < 0.8:
+        elif t < 0.95:
             # White → Yellow
-            s = (t - 0.6) * 5.0
+            s = (t - 0.90) / 0.05
             colors[i, 0] = 1.0
             colors[i, 1] = 1.0 - 0.05 * s
             colors[i, 2] = 1.0 - 1.0 * s
-        elif t < 0.9:
+        elif t < 0.99:
             # Yellow → Orange (rare)
-            s = (t - 0.8) * 10.0
+            s = (t - 0.95) / 0.04
             colors[i, 0] = 1.0
             colors[i, 1] = 0.95 - 0.45 * s
             colors[i, 2] = 0.0
         else:
             # Orange → Red (extremely rare!)
-            s = (t - 0.9) * 10.0
+            s = (t - 0.99) / 0.01
             colors[i, 0] = 1.0
             colors[i, 1] = 0.5 - 0.5 * s
             colors[i, 2] = 0.0
@@ -486,7 +500,11 @@ class MetalSimulation:
         self.positions = self.positions + self.velocities * dt
     
     def compute_colors(self, max_speed: float):
-        """Compute colors based on velocity (deep blue → red heat map)."""
+        """Compute colors based on velocity (deep blue → red heat map).
+        
+        White at 55%, Yellow at 90%, Orange at 95%, Red at 99%.
+        White dominates 55-90% range (most particles).
+        """
         import torch
         speed = torch.norm(self.velocities, dim=1)
         t = torch.clamp(speed / max_speed, 0, 1)
@@ -497,44 +515,60 @@ class MetalSimulation:
         g = torch.zeros_like(t)
         b = torch.zeros_like(t)
         
-        # Deep blue → Light blue (0.0-0.2)
-        mask = t < 0.2
-        s = t[mask] * 5.0
-        r[mask] = 0.0 + 0.3 * s
-        g[mask] = 0.1 + 0.4 * s
-        b[mask] = 0.5 + 0.4 * s
+        # Deep blue → Light blue → Cyan → White (0.0-0.55)
+        mask = t < 0.55
+        if mask.any():
+            t_masked = t[mask]
+            # Deep blue → Light blue (0.0-0.4)
+            mask1 = t_masked < 0.4
+            if mask1.any():
+                s = t_masked[mask1] / 0.4
+                r[mask][mask1] = 0.0 + 0.3 * s
+                g[mask][mask1] = 0.1 + 0.4 * s
+                b[mask][mask1] = 0.5 + 0.4 * s
+            
+            # Light blue → Cyan → White (0.4-0.55)
+            mask2 = t_masked >= 0.4
+            if mask2.any():
+                s = (t_masked[mask2] - 0.4) / 0.15
+                # Light blue → Cyan
+                mask2a = s < 0.67
+                if mask2a.any():
+                    s2 = s[mask2a] / 0.67
+                    r[mask][mask2][mask2a] = 0.3 - 0.1 * s2
+                    g[mask][mask2][mask2a] = 0.5 + 0.3 * s2
+                    b[mask][mask2][mask2a] = 0.9 + 0.1 * s2
+                # Cyan → White
+                mask2b = s >= 0.67
+                if mask2b.any():
+                    s2 = (s[mask2b] - 0.67) / 0.33
+                    r[mask][mask2][mask2b] = 0.2 + 0.8 * s2
+                    g[mask][mask2][mask2b] = 0.8 + 0.2 * s2
+                    b[mask][mask2][mask2b] = 1.0
         
-        # Light blue → Cyan (0.2-0.4)
-        mask = (t >= 0.2) & (t < 0.4)
-        s = (t[mask] - 0.2) * 5.0
-        r[mask] = 0.3 - 0.1 * s
-        g[mask] = 0.5 + 0.3 * s
-        b[mask] = 0.9 + 0.1 * s
-        
-        # Cyan → White (0.4-0.6)
-        mask = (t >= 0.4) & (t < 0.6)
-        s = (t[mask] - 0.4) * 5.0
-        r[mask] = 0.2 + 0.8 * s
-        g[mask] = 0.8 + 0.2 * s
+        # White (0.55-0.90) - PRIMARY RANGE
+        mask = (t >= 0.55) & (t < 0.90)
+        r[mask] = 1.0
+        g[mask] = 1.0
         b[mask] = 1.0
         
-        # White → Yellow (0.6-0.8)
-        mask = (t >= 0.6) & (t < 0.8)
-        s = (t[mask] - 0.6) * 5.0
+        # White → Yellow (0.90-0.95)
+        mask = (t >= 0.90) & (t < 0.95)
+        s = (t[mask] - 0.90) / 0.05
         r[mask] = 1.0
         g[mask] = 1.0 - 0.05 * s
         b[mask] = 1.0 - 1.0 * s
         
-        # Yellow → Orange (0.8-0.9, rare)
-        mask = (t >= 0.8) & (t < 0.9)
-        s = (t[mask] - 0.8) * 10.0
+        # Yellow → Orange (0.95-0.99, rare)
+        mask = (t >= 0.95) & (t < 0.99)
+        s = (t[mask] - 0.95) / 0.04
         r[mask] = 1.0
         g[mask] = 0.95 - 0.45 * s
         b[mask] = 0.0
         
-        # Orange → Red (0.9-1.0, extremely rare!)
-        mask = t >= 0.9
-        s = (t[mask] - 0.9) * 10.0
+        # Orange → Red (0.99-1.0, extremely rare!)
+        mask = t >= 0.99
+        s = (t[mask] - 0.99) / 0.01
         r[mask] = 1.0
         g[mask] = 0.5 - 0.5 * s
         b[mask] = 0.0

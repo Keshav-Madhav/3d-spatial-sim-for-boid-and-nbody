@@ -15,7 +15,7 @@ Usage:
 Output:
     recordings/<session_name>/
         metadata.json     - Recording settings
-        frame_0000.npz    - Position/color data for each frame
+        frame_0000.zstd   - Compressed position/color data (zstd+delta compression)
         ...
 """
 
@@ -25,6 +25,7 @@ import json
 import time
 import shutil
 import argparse
+import struct
 import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -66,8 +67,12 @@ def load_metadata(rec_dir: Path) -> dict:
 def get_completed_frames(rec_dir: Path) -> int:
     """Count how many frames have been recorded."""
     count = 0
-    while (rec_dir / f"frame_{count:04d}.npz").exists():
-        count += 1
+    while True:
+        # Check for uncompressed .npz (during recording) or compressed .zstd (after compression)
+        if (rec_dir / f"frame_{count:04d}.npz").exists() or (rec_dir / f"frame_{count:04d}.zstd").exists():
+            count += 1
+        else:
+            break
     return count
 
 
@@ -91,30 +96,177 @@ def save_frame(rec_dir: Path, frame_idx: int, positions: np.ndarray, colors: np.
     )
 
 
+def load_frame(rec_dir: Path, frame_idx: int, prev_positions: np.ndarray = None,
+               prev_colors: np.ndarray = None) -> tuple:
+    """
+    Load a single frame from disk.
+    
+    If the frame uses delta compression and prev_positions/prev_colors are not provided,
+    this function will automatically load the previous frame(s) as needed.
+    
+    Args:
+        rec_dir: Recording directory
+        frame_idx: Frame index
+        prev_positions: Previous frame positions (for delta decompression, auto-loaded if None)
+        prev_colors: Previous frame colors (for delta decompression, auto-loaded if None)
+    
+    Returns:
+        (positions, colors) tuple
+    """
+    zstd_file = rec_dir / f"frame_{frame_idx:04d}.zstd"
+    npz_file = rec_dir / f"frame_{frame_idx:04d}.npz"
+    
+    if zstd_file.exists():
+        # Compressed zstd format
+        with open(zstd_file, 'rb') as f:
+            compressed_data = f.read()
+        
+        if len(compressed_data) > 0:
+            comp_format = struct.unpack('B', compressed_data[0:1])[0]
+            
+            # If delta-compressed and we don't have previous frame, load it
+            if comp_format == 2 and (prev_positions is None or prev_colors is None):
+                if frame_idx > 0:
+                    prev_positions, prev_colors = load_frame(rec_dir, frame_idx - 1)
+                else:
+                    raise ValueError(f"Frame {frame_idx:04d} appears to be delta-compressed but is the first frame")
+        
+        return decompress_frame(compressed_data, prev_positions, prev_colors)
+    elif npz_file.exists():
+        # Uncompressed format (during recording, before compression)
+        with np.load(npz_file) as data:
+            return data["positions"].copy(), data["colors"].copy()
+    else:
+        raise FileNotFoundError(f"Frame {frame_idx:04d} not found")
+
+
 # =============================================================================
-# BACKGROUND BATCH COMPRESSION
+# BACKGROUND BATCH COMPRESSION WITH ZSTD + DELTA COMPRESSION
 # =============================================================================
 
 import threading
 from queue import Queue
 import shutil
+import struct
+import gc
 
 # Compression batch size - compress this many frames at once
 # Smaller batches = less memory pressure, more frequent cleanup
 COMPRESSION_BATCH_SIZE = 50
 
-import gc  # For explicit garbage collection
+# zstandard is required
+import zstandard as zstd
+
+
+def compress_frame(positions: np.ndarray, colors: np.ndarray, 
+                   prev_positions: np.ndarray = None, 
+                   prev_colors: np.ndarray = None) -> bytes:
+    """
+    Compress frame data using zstd with delta compression.
+    
+    Delta compression stores differences between frames, which compresses
+    much better than absolute values for smooth animations.
+    
+    Format:
+    - 1 byte: compression format (1=zstd absolute, 2=zstd+delta)
+    - 4 bytes: positions data size
+    - N bytes: compressed positions
+    - 4 bytes: colors data size  
+    - N bytes: compressed colors
+    """
+    # Use delta compression if previous frame is available, otherwise absolute
+    use_delta = prev_positions is not None and prev_colors is not None
+    comp_format = 2 if use_delta else 1
+    
+    # Use level 19 (max compression) for best compression ratio
+    cctx = zstd.ZstdCompressor(level=19, threads=1)
+    
+    if use_delta:
+        # Delta compression: store differences instead of absolute values
+        pos_delta = positions - prev_positions
+        col_delta = colors - prev_colors
+        # Convert to int16 for better compression (differences are small)
+        pos_delta_int = (pos_delta * 1000).astype(np.int16)  # Scale to preserve precision
+        col_delta_int = (col_delta * 1000).astype(np.int16)
+        pos_data = pos_delta_int.tobytes()
+        col_data = col_delta_int.tobytes()
+    else:
+        # Absolute values (first frame only)
+        pos_data = positions.astype(np.float32).tobytes()
+        col_data = colors.astype(np.float32).tobytes()
+    
+    # Compress with zstd
+    pos_compressed = cctx.compress(pos_data)
+    col_compressed = cctx.compress(col_data)
+    
+    # Pack format: format byte, positions size (4 bytes), positions data, colors size (4 bytes), colors data
+    result = struct.pack('B', comp_format)
+    result += struct.pack('I', len(pos_compressed))
+    result += pos_compressed
+    result += struct.pack('I', len(col_compressed))
+    result += col_compressed
+    
+    return result
+
+
+def decompress_frame(data: bytes, prev_positions: np.ndarray = None,
+                     prev_colors: np.ndarray = None) -> tuple:
+    """
+    Decompress frame data using zstd with delta compression.
+    """
+    if len(data) < 1:
+        raise ValueError("Invalid compressed data")
+    
+    comp_format = struct.unpack('B', data[0:1])[0]
+    offset = 1
+    
+    # Read positions
+    pos_size = struct.unpack('I', data[offset:offset+4])[0]
+    offset += 4
+    pos_compressed = data[offset:offset+pos_size]
+    offset += pos_size
+    
+    # Read colors
+    col_size = struct.unpack('I', data[offset:offset+4])[0]
+    offset += 4
+    col_compressed = data[offset:offset+col_size]
+    
+    # Decompress with zstd
+    dctx = zstd.ZstdDecompressor()
+    pos_data = dctx.decompress(pos_compressed)
+    col_data = dctx.decompress(col_compressed)
+    
+    if comp_format == 1:
+        # Absolute values (first frame)
+        positions = np.frombuffer(pos_data, dtype=np.float32).reshape(-1, 3)
+        colors = np.frombuffer(col_data, dtype=np.float32).reshape(-1, 3)
+    elif comp_format == 2:
+        # Delta compression - reconstruct from differences
+        if prev_positions is None or prev_colors is None:
+            raise ValueError("Delta compression requires previous frame")
+        pos_delta_int = np.frombuffer(pos_data, dtype=np.int16).reshape(-1, 3)
+        col_delta_int = np.frombuffer(col_data, dtype=np.int16).reshape(-1, 3)
+        pos_delta = pos_delta_int.astype(np.float32) / 1000.0
+        col_delta = col_delta_int.astype(np.float32) / 1000.0
+        positions = prev_positions + pos_delta
+        colors = prev_colors + col_delta
+    else:
+        raise ValueError(f"Unknown compression format: {comp_format}")
+    
+    return positions, colors
 
 
 class BackgroundCompressor:
     """
     Compresses frames in batches in the background while recording continues.
     
+    Uses zstd compression with delta encoding for optimal compression ratios.
+    
     Strategy:
     - Frames are saved uncompressed for speed (~4ms each)
     - Every BATCH_SIZE frames, queue them for background compression
-    - Background thread compresses and replaces uncompressed files
-    - Final result: compressed files with fast recording
+    - Background thread compresses with zstd+delta and replaces uncompressed files
+    - Delta compression stores differences between frames (much smaller)
     """
     
     def __init__(self, rec_dir: Path, batch_size: int = COMPRESSION_BATCH_SIZE):
@@ -125,6 +277,10 @@ class BackgroundCompressor:
         self.running = False
         self.compressed_count = 0
         self.pending_batches = 0
+        self.total_saved_bytes = 0
+        self.total_original_bytes = 0
+        self.total_frames_to_compress = 0
+        self.lock = threading.Lock()  # For thread-safe progress updates
     
     def start(self):
         """Start the background compression thread."""
@@ -137,7 +293,7 @@ class BackgroundCompressor:
         self.running = False
         self.queue.put(None)  # Signal to stop
         if self.thread:
-            self.thread.join(timeout=60)  # Wait up to 60s for completion
+            self.thread.join(timeout=300)  # Wait up to 5min for completion (compression can be slow)
     
     def queue_batch(self, start_frame: int, end_frame: int):
         """Queue a batch of frames for compression."""
@@ -162,7 +318,9 @@ class BackgroundCompressor:
                 
                 start_frame, end_frame = item
                 self._compress_batch(start_frame, end_frame)
-                self.pending_batches -= 1
+                
+                with self.lock:
+                    self.pending_batches -= 1
                 
                 # Force garbage collection after each batch to free memory
                 gc.collect()
@@ -171,11 +329,28 @@ class BackgroundCompressor:
                 continue
     
     def _compress_batch(self, start_frame: int, end_frame: int):
-        """Compress a batch of frames."""
+        """Compress a batch of frames with delta compression."""
+        prev_positions = None
+        prev_colors = None
+        
+        # Load previous frame if needed for delta compression
+        if start_frame > 0:
+            try:
+                prev_positions, prev_colors = load_frame(self.rec_dir, start_frame - 1)
+            except:
+                # Previous frame not available, start without delta
+                prev_positions = None
+                prev_colors = None
+        
         for frame_idx in range(start_frame, end_frame):
             uncompressed = self.rec_dir / f"frame_{frame_idx:04d}.npz"
             
             if not uncompressed.exists():
+                # Frame might already be compressed, try to load it for next delta
+                try:
+                    prev_positions, prev_colors = load_frame(self.rec_dir, frame_idx)
+                except:
+                    pass
                 continue
             
             try:
@@ -184,37 +359,117 @@ class BackgroundCompressor:
                     positions = data['positions'].copy()  # Copy before file closes
                     colors = data['colors'].copy()
                 
-                # Save compressed (to temp file first)
-                temp_file = self.rec_dir / f"frame_{frame_idx:04d}.tmp.npz"
-                np.savez_compressed(temp_file, positions=positions, colors=colors)
+                # Get original size
+                original_size = uncompressed.stat().st_size
+                self.total_original_bytes += original_size
                 
-                # Replace original with compressed
-                temp_file.replace(uncompressed)
+                # Compress with zstd+delta
+                compressed_data = compress_frame(
+                    positions, colors, 
+                    prev_positions,
+                    prev_colors
+                )
+                
+                # Save compressed data
+                compressed_file = self.rec_dir / f"frame_{frame_idx:04d}.zstd"
+                with open(compressed_file, 'wb') as f:
+                    f.write(compressed_data)
+                
+                # Remove uncompressed file
+                uncompressed.unlink()
+                
+                # Track compression stats
+                compressed_size = len(compressed_data)
+                self.total_saved_bytes += compressed_size
                 self.compressed_count += 1
+                
+                # Store for delta compression of next frame
+                prev_positions = positions.copy()
+                prev_colors = colors.copy()
                 
                 # Explicitly free memory
                 del positions, colors
                 
             except Exception as e:
                 # If compression fails, keep the uncompressed file
-                pass
+                import traceback
+                print(f"[Compress] Warning: Failed to compress frame {frame_idx}: {e}")
+                traceback.print_exc()
     
     def compress_remaining(self, total_frames: int):
         """Compress any remaining uncompressed frames after recording."""
+        # Count uncompressed frames
+        uncompressed_count = 0
+        for i in range(total_frames):
+            if (self.rec_dir / f"frame_{i:04d}.npz").exists():
+                uncompressed_count += 1
+        
+        if uncompressed_count == 0:
+            # All frames already compressed or being compressed
+            print("[Compress] All frames compressed or compressing in background...")
+        else:
+            print(f"[Compress] Compressing remaining {uncompressed_count} frames...")
+        
         # Find the last queued batch end
         last_batch_end = (total_frames // self.batch_size) * self.batch_size
         
-        # Compress remaining frames
+        # Compress remaining frames (if any)
         if last_batch_end < total_frames:
-            print(f"[Compress] Compressing final {total_frames - last_batch_end} frames...")
             self._compress_batch(last_batch_end, total_frames)
         
-        # Wait for background thread to finish
-        while self.pending_batches > 0:
-            import time
+        # Wait for background thread to finish with progress updates
+        import time
+        start_wait = time.time()
+        last_update = 0
+        
+        # Wait while there are pending batches or uncompressed frames
+        while True:
+            with self.lock:
+                pending = self.pending_batches
+            
+            # Count current progress
+            compressed_now = 0
+            uncompressed_now = 0
+            for i in range(total_frames):
+                if (self.rec_dir / f"frame_{i:04d}.zstd").exists():
+                    compressed_now += 1
+                elif (self.rec_dir / f"frame_{i:04d}.npz").exists():
+                    uncompressed_now += 1
+            
+            # Break if all frames are compressed and no batches pending
+            if compressed_now == total_frames and pending == 0:
+                # Give thread a moment to finish, then break
+                time.sleep(0.2)
+                with self.lock:
+                    if self.pending_batches == 0:
+                        break
+            
+            # Update progress every 0.5s to avoid overhead
+            if time.time() - last_update >= 0.5:
+                remaining = total_frames - compressed_now
+                pct = compressed_now / total_frames * 100 if total_frames > 0 else 0
+                
+                # Simple progress bar
+                bar_width = 30
+                filled = int(bar_width * compressed_now / total_frames) if total_frames > 0 else 0
+                bar = "█" * filled + "░" * (bar_width - filled)
+                
+                print(f"\r[Compress] [{bar}] {pct:5.1f}% | {compressed_now}/{total_frames} frames | "
+                      f"{remaining} remaining    ", end="", flush=True)
+                last_update = time.time()
+            
             time.sleep(0.1)
         
+        print()  # New line after progress
+        
+        # Print compression stats
+        compression_ratio = (1 - self.total_saved_bytes / self.total_original_bytes) * 100 if self.total_original_bytes > 0 else 0
+        avg_size_mb = self.total_saved_bytes / max(1, self.compressed_count) / (1024 * 1024)
+        
+        print(f"[Compress] ✓ Compression complete!")
         print(f"[Compress] Compressed {self.compressed_count}/{total_frames} frames")
+        print(f"[Compress] Compression ratio: {compression_ratio:.1f}% reduction")
+        print(f"[Compress] Average frame size: {avg_size_mb:.2f} MB")
     
     def get_status(self) -> str:
         """Get compression status string."""

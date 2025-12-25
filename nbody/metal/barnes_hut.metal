@@ -158,31 +158,43 @@ kernel void compute_colors(
     float t = clamp(speed / max_speed, 0.0f, 1.0f);
     
     // Color gradient: deep blue → light blue → cyan → white → yellow → orange → red
+    // White at 55%, Yellow at 90%, Orange at 95%, Red at 99%
+    // White dominates 55-90% range (most particles)
     float3 color;
     
-    if (t < 0.2f) {
-        // Deep blue (0.0, 0.1, 0.5) → Light blue (0.3, 0.5, 0.9)
-        float s = t * 5.0f;
-        color = float3(0.0f + 0.3f * s, 0.1f + 0.4f * s, 0.5f + 0.4f * s);
-    } else if (t < 0.4f) {
-        // Light blue (0.3, 0.5, 0.9) → Cyan (0.2, 0.8, 1.0)
-        float s = (t - 0.2f) * 5.0f;
-        color = float3(0.3f - 0.1f * s, 0.5f + 0.3f * s, 0.9f + 0.1f * s);
-    } else if (t < 0.6f) {
-        // Cyan (0.2, 0.8, 1.0) → White (1.0, 1.0, 1.0)
-        float s = (t - 0.4f) * 5.0f;
-        color = float3(0.2f + 0.8f * s, 0.8f + 0.2f * s, 1.0f);
-    } else if (t < 0.8f) {
+    if (t < 0.55f) {
+        // Deep blue → Light blue → Cyan → White
+        if (t < 0.4f) {
+            // Deep blue (0.0, 0.1, 0.5) → Light blue (0.3, 0.5, 0.9)
+            float s = t / 0.4f;
+            color = float3(0.0f + 0.3f * s, 0.1f + 0.4f * s, 0.5f + 0.4f * s);
+        } else {
+            // Light blue → Cyan → White
+            float s = (t - 0.4f) / 0.15f;
+            if (s < 0.67f) {
+                // Light blue → Cyan
+                float s2 = s / 0.67f;
+                color = float3(0.3f - 0.1f * s2, 0.5f + 0.3f * s2, 0.9f + 0.1f * s2);
+            } else {
+                // Cyan → White
+                float s2 = (s - 0.67f) / 0.33f;
+                color = float3(0.2f + 0.8f * s2, 0.8f + 0.2f * s2, 1.0f);
+            }
+        }
+    } else if (t < 0.90f) {
+        // White (1.0, 1.0, 1.0) - PRIMARY RANGE
+        color = float3(1.0f, 1.0f, 1.0f);
+    } else if (t < 0.95f) {
         // White (1.0, 1.0, 1.0) → Yellow (1.0, 0.95, 0.0)
-        float s = (t - 0.6f) * 5.0f;
+        float s = (t - 0.90f) / 0.05f;
         color = float3(1.0f, 1.0f - 0.05f * s, 1.0f - 1.0f * s);
-    } else if (t < 0.9f) {
+    } else if (t < 0.99f) {
         // Yellow (1.0, 0.95, 0.0) → Orange (1.0, 0.5, 0.0) - RARE
-        float s = (t - 0.8f) * 10.0f;
+        float s = (t - 0.95f) / 0.04f;
         color = float3(1.0f, 0.95f - 0.45f * s, 0.0f);
     } else {
         // Orange (1.0, 0.5, 0.0) → Red (1.0, 0.0, 0.0) - EXTREMELY RARE!
-        float s = (t - 0.9f) * 10.0f;
+        float s = (t - 0.99f) / 0.01f;
         color = float3(1.0f, 0.5f - 0.5f * s, 0.0f);
     }
     

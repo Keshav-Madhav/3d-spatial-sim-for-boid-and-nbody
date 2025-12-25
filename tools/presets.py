@@ -34,7 +34,8 @@ DISTRIBUTIONS = {
     "stream": "Tidal stream / stellar river",
     "filament": "Cosmic web filament",
     "explosion": "Expanding supernova shell",
-    "vortex": "Swirling vortex structure",
+    "disc": "Flat disc structure with rotation",
+    "vortex": "Tornado-like vortex with orbital velocity",
     "cube": "Cubic lattice (for testing)",
     "pleiades": "Star cluster with nebulosity",
     "double_helix": "DNA-like double helix structure",
@@ -73,13 +74,14 @@ def compute_rotation_curve(r: np.ndarray, masses: np.ndarray, G: float, softenin
     r_sq = sorted_r ** 2
     
     # Rotation velocity with proper softening
+    # Ensure we have enough rotation speed for stability
     v_circular = np.sqrt(G * cumulative_mass * r_sq / (r_sq + eps_sq) ** 1.5)
     
-    # Aggressive inner damping - use sigmoid-like curve
-    # This ensures center particles have near-zero velocity
-    inner_scale = softening * 3  # Damping scale
+    # Less aggressive inner damping - allow more rotation near center
+    # This helps maintain spiral structure
+    inner_scale = softening * 2  # Reduced damping scale
     inner_damping = (sorted_r ** 2) / (sorted_r ** 2 + inner_scale ** 2)
-    v_circular *= inner_damping
+    v_circular *= np.maximum(inner_damping, 0.3)  # Minimum 30% of speed at center
     
     # Map back to original order
     inverse_idx = np.argsort(sort_idx)
@@ -100,7 +102,7 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
     masses = np.ones(n, dtype=np.float64)
     
     if distribution == "galaxy":
-        # Stable exponential disk galaxy with proper rotation curve
+        # Stable exponential disk galaxy with proper rotation curve - physically accurate
         scale_length = R * 0.3  # Exponential scale length
         softening = R * 0.03  # Match typical N-body softening
         
@@ -109,13 +111,13 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         
         # Soft truncation: smoothly reduce density at large radii
         # instead of hard clipping which creates edge artifacts
-        max_r = R * 1.2
+        max_r = R * 1.0  # More realistic truncation
         r = r * (1 - np.exp(-max_r / (r + 0.01)))  # Soft cap
         r = np.maximum(r, R * 0.001)  # Just prevent exactly zero
         
         theta = np.random.uniform(0, 2 * np.pi, n)
         
-        # Thin disk with slight flare at edges
+        # Thin disk with slight flare at edges (realistic disk thickness)
         disk_height = R * 0.012 * (1 + (r / R) ** 0.5 * 0.3)
         z = np.random.normal(0, 1, n) * disk_height
         
@@ -130,32 +132,42 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         velocities[:, 0] = -orbital_speed * np.sin(theta)
         velocities[:, 2] = orbital_speed * np.cos(theta)
         
-        # Velocity dispersion (Toomre stability)
+        # Velocity dispersion (Toomre stability parameter Q ~ 1-2)
         # Scale dispersion with radius - very small at center, larger at edge
         radial_factor = r / (r + softening * 2)  # 0 at center, ~1 at large r
-        sigma = orbital_speed * 0.10 * radial_factor + np.sqrt(G * n * 0.00005)
+        # More accurate: sigma should be ~10-15% of orbital speed for stability
+        sigma = orbital_speed * 0.12 * radial_factor + np.sqrt(G * n * 0.00005)
         velocities[:, 0] += np.random.normal(0, sigma, n)
         velocities[:, 2] += np.random.normal(0, sigma, n)
-        velocities[:, 1] = np.random.normal(0, sigma * 0.25, n)
+        velocities[:, 1] = np.random.normal(0, sigma * 0.25, n)  # Vertical dispersion smaller
+        
+        # Ensure center of mass velocity is zero for stability
+        com_vel = np.sum(velocities * masses[:, np.newaxis], axis=0) / np.sum(masses)
+        velocities -= com_vel
         
     elif distribution == "collision":
-        # Two stable galaxies on collision course
+        # Two stable galaxies on collision course - physically accurate
         half = n // 2
         n2 = n - half
         scale_length = R * 0.25
         softening = R * 0.025
         
-        # ===== Galaxy 1 (centered at -R*0.7) =====
+        # Proper separation - galaxies should be far enough apart initially
+        # Typical galaxy collision: separation ~3-5x galaxy radius
+        galaxy_radius = R * 0.5  # Effective radius of each galaxy
+        separation = galaxy_radius * 3.5  # Realistic initial separation
+        
+        # ===== Galaxy 1 (centered at -separation/2) =====
         r1 = np.random.exponential(scale_length, half)
         # Soft truncation (no hard clip!)
-        max_r1 = R * 0.6
+        max_r1 = R * 0.5  # Keep galaxies compact
         r1 = r1 * (1 - np.exp(-max_r1 / (r1 + 0.01)))
         r1 = np.maximum(r1, R * 0.001)
         
         theta1 = np.random.uniform(0, 2 * np.pi, half)
         
         # Positions (galaxy 1 at left)
-        galaxy1_x = -R * 0.7
+        galaxy1_x = -separation / 2
         positions[:half, 0] = r1 * np.cos(theta1) + galaxy1_x
         disk_height1 = R * 0.01 * (1 + (r1 / R) ** 0.5 * 0.3)
         positions[:half, 1] = np.random.normal(0, 1, half) * disk_height1
@@ -176,22 +188,18 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         velocities[:half, 2] += np.random.normal(0, sigma1, half)
         velocities[:half, 1] = np.random.normal(0, sigma1 * 0.25, half)
         
-        # Bulk motion toward galaxy 2
-        collision_speed = 1.2
-        velocities[:half, 0] += collision_speed
-        
-        # ===== Galaxy 2 (centered at +R*0.7, offset in Y) =====
+        # ===== Galaxy 2 (centered at +separation/2, offset in Y for off-center collision) =====
         r2 = np.random.exponential(scale_length, n2)
         # Soft truncation
-        max_r2 = R * 0.6
+        max_r2 = R * 0.5
         r2 = r2 * (1 - np.exp(-max_r2 / (r2 + 0.01)))
         r2 = np.maximum(r2, R * 0.001)
         
         theta2 = np.random.uniform(0, 2 * np.pi, n2)
         
         # Positions (galaxy 2 at right, offset in Y for off-center collision)
-        galaxy2_x = R * 0.7
-        galaxy2_y = R * 0.12
+        galaxy2_x = separation / 2
+        galaxy2_y = R * 0.15  # Offset for off-center collision
         positions[half:, 0] = r2 * np.cos(theta2) + galaxy2_x
         disk_height2 = R * 0.01 * (1 + (r2 / R) ** 0.5 * 0.3)
         positions[half:, 1] = np.random.normal(0, 1, n2) * disk_height2 + galaxy2_y
@@ -212,11 +220,20 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         velocities[half:, 2] += np.random.normal(0, sigma2, n2)
         velocities[half:, 1] = np.random.normal(0, sigma2 * 0.25, n2)
         
-        # Bulk motion toward galaxy 1
+        # Proper relative velocity based on orbital mechanics
+        # For two galaxies approaching, use escape velocity approximation
+        # v_rel ≈ sqrt(2 * G * M_total / separation) * 0.6 (slightly bound)
+        total_mass = n * 0.001  # Approximate total mass
+        escape_vel = np.sqrt(2 * G * total_mass / separation)
+        collision_speed = escape_vel * 0.6  # Slightly bound collision
+        
+        # Bulk motion toward each other
+        velocities[:half, 0] += collision_speed
         velocities[half:, 0] -= collision_speed
         
     elif distribution == "spiral":
-        # Stable multi-arm spiral galaxy with proper rotation
+        # Stable multi-arm spiral galaxy with proper rotation - physically accurate
+        # Trailing spiral arms (like Milky Way) - arms trail behind rotation
         scale_length = R * 0.3
         softening = R * 0.03
         
@@ -224,15 +241,17 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         disk_r = np.random.exponential(scale_length, n)
         
         # Soft truncation
-        max_r = R * 1.2
+        max_r = R * 1.0  # More realistic truncation
         disk_r = disk_r * (1 - np.exp(-max_r / (disk_r + 0.01)))
         disk_r = np.maximum(disk_r, R * 0.001)
         
-        # Logarithmic spiral pattern
+        # Logarithmic spiral pattern - TRAILING spiral (negative sign for trailing)
+        # For trailing: as radius increases, angle decreases (winds backward)
         spiral_tightness = 0.35
         num_arms = 4
         
-        base_theta = np.log(disk_r / (R * 0.02) + 1) / spiral_tightness
+        # Trailing spiral: base_theta decreases with radius (negative)
+        base_theta = -np.log(disk_r / (R * 0.02) + 1) / spiral_tightness
         arm_assignment = np.random.randint(0, num_arms, n)
         arm_offset = arm_assignment * (2 * np.pi / num_arms)
         
@@ -248,21 +267,35 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         disk_height = R * 0.012 * (1 + (disk_r / R) ** 0.5 * 0.3)
         positions[:, 1] = np.random.normal(0, 1, n) * disk_height
         
-        # Proper rotation curve
+        # Proper rotation curve - ensure adequate rotation speed
+        # The rotation curve should account for the full disk mass properly
         orbital_speed = compute_rotation_curve(disk_r, masses, G, softening)
         
-        # Tangential velocity (perpendicular to radius vector)
-        # Use actual position angle, not spiral angle
+        # Ensure minimum rotation speed for spiral stability
+        # For a stable spiral, rotation speed should be sufficient to maintain structure
+        # Use a reference speed based on total mass and radius
+        total_mass = n * 0.001  # Approximate total mass
+        reference_speed = np.sqrt(G * total_mass / (disk_r + softening))
+        # Ensure orbital speed is at least 70% of reference (allows for pattern speed difference)
+        orbital_speed = np.maximum(orbital_speed, reference_speed * 0.7)
+        
+        # Tangential velocity (counter-clockwise rotation in XZ plane)
+        # Use actual position angle
         pos_theta = np.arctan2(positions[:, 2], positions[:, 0])
         velocities[:, 0] = -orbital_speed * np.sin(pos_theta)
         velocities[:, 2] = orbital_speed * np.cos(pos_theta)
         
         # Velocity dispersion - scales with radius (small at center)
+        # Toomre Q parameter for spiral stability
         radial_factor = disk_r / (disk_r + softening * 2)
         sigma = orbital_speed * 0.10 * radial_factor + np.sqrt(G * n * 0.00005)
         velocities[:, 0] += np.random.normal(0, sigma, n)
         velocities[:, 2] += np.random.normal(0, sigma, n)
         velocities[:, 1] = np.random.normal(0, sigma * 0.25, n)
+        
+        # Ensure center of mass velocity is zero for stability
+        com_vel = np.sum(velocities * masses[:, np.newaxis], axis=0) / np.sum(masses)
+        velocities -= com_vel
         
     elif distribution == "ring":
         # Saturn-like ring with central mass concentration
@@ -315,13 +348,13 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         velocities[:, 2] = positions[:, 2] * 0.01
         
     elif distribution == "cluster":
-        # Globular cluster (Plummer model)
+        # Globular cluster (Plummer model) - physically accurate
         a = R * 0.3  # Plummer scale radius
         
-        # Plummer distribution
+        # Plummer spatial distribution: ρ(r) = (3M/(4πa³)) * (1 + r²/a²)^(-5/2)
         u = np.random.uniform(0, 1, n)
         r = a / np.sqrt(u**(-2/3) - 1)
-        r = np.clip(r, 0, R * 2)
+        r = np.clip(r, 0, R * 1.5)  # Truncate at reasonable radius
         
         phi = np.random.uniform(0, 2 * np.pi, n)
         cos_theta = np.random.uniform(-1, 1, n)
@@ -331,51 +364,124 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         positions[:, 1] = r * cos_theta
         positions[:, 2] = r * sin_theta * np.sin(phi)
         
-        # Isotropic velocities (virial equilibrium approximation)
-        sigma = np.sqrt(G * n * 0.001 / (6 * a))
-        velocities = np.random.normal(0, sigma, (n, 3))
+        # Proper Plummer velocity distribution for virial equilibrium
+        # For Plummer model: σ²(r) = GM/(6a) * (1 + r²/a²)^(-1/2)
+        # This gives isotropic velocity dispersion that varies with radius
+        total_mass = n * 0.001  # Total cluster mass
+        r_a_ratio = r / a
+        r_a_sq = r_a_ratio ** 2
+        
+        # Velocity dispersion at each radius
+        sigma_sq = G * total_mass / (6 * a) * (1 + r_a_sq) ** (-0.5)
+        sigma = np.sqrt(np.maximum(sigma_sq, G * total_mass / (6 * a) * 0.01))  # Floor to prevent zeros
+        
+        # Isotropic velocity distribution (Maxwellian)
+        # Generate velocities with proper magnitude distribution
+        for i in range(n):
+            # Sample speed from Maxwell-Boltzmann distribution
+            # For 3D: v ~ sqrt(2/π) * (v²/σ²) * exp(-v²/(2σ²))
+            # Use rejection sampling or approximate with normal
+            v_mag = np.abs(np.random.normal(0, sigma[i] * np.sqrt(3)))  # Approximate
+            
+            # Random direction (isotropic)
+            v_phi = np.random.uniform(0, 2 * np.pi)
+            v_cos_theta = np.random.uniform(-1, 1)
+            v_sin_theta = np.sqrt(1 - v_cos_theta**2)
+            
+            velocities[i, 0] = v_mag * v_sin_theta * np.cos(v_phi)
+            velocities[i, 1] = v_mag * v_cos_theta
+            velocities[i, 2] = v_mag * v_sin_theta * np.sin(v_phi)
+        
+        # Ensure center of mass velocity is zero for stability
+        com_vel = np.sum(velocities * masses[:, np.newaxis], axis=0) / np.sum(masses)
+        velocities -= com_vel
         
     elif distribution == "binary":
-        # Binary star system with two disks
+        # Binary star system with two protoplanetary disks - physically accurate
         n1 = n // 2
         n2 = n - n1
-        separation = R * 0.6
         
-        # Star 1 disk
-        r1 = np.random.exponential(R * 0.15, n1)
+        # Proper binary separation based on orbital mechanics
+        # For stable binary: separation should allow for stable orbits
+        total_mass = n * 0.001
+        separation = R * 0.5  # Reasonable separation
+        
+        # Binary orbital velocity around center of mass
+        # v = sqrt(G * M_total / separation) for circular orbit
+        binary_orbital_speed = np.sqrt(G * total_mass / separation)
+        
+        # Star 1 disk (around star 1)
+        r1 = np.random.exponential(R * 0.12, n1)
+        r1 = np.clip(r1, R * 0.01, R * 0.25)  # Keep disk compact
         theta1 = np.random.uniform(0, 2 * np.pi, n1)
+        
         positions[:n1, 0] = r1 * np.cos(theta1) - separation / 2
-        positions[:n1, 1] = np.random.normal(0, R * 0.01, n1)
+        positions[:n1, 1] = np.random.normal(0, R * 0.008, n1)
         positions[:n1, 2] = r1 * np.sin(theta1)
         
-        orbital_speed1 = np.sqrt(G * n1 * 0.001 / (r1 + 1.0))
-        binary_orbital = np.sqrt(G * n * 0.0005 / separation)
-        velocities[:n1, 0] = -orbital_speed1 * np.sin(theta1)
-        velocities[:n1, 2] = orbital_speed1 * np.cos(theta1) - binary_orbital
+        # Orbital speed around star 1 (Keplerian)
+        star1_mass = n1 * 0.001
+        orbital_speed1 = np.sqrt(G * star1_mass / (r1 + R * 0.01))
         
-        # Star 2 disk (tilted)
-        r2 = np.random.exponential(R * 0.15, n2)
+        # Tangential velocity around star 1
+        velocities[:n1, 0] = -orbital_speed1 * np.sin(theta1)
+        velocities[:n1, 2] = orbital_speed1 * np.cos(theta1)
+        
+        # Add binary orbital motion (star 1 orbits center of mass)
+        velocities[:n1, 0] += 0  # Star 1 moves slower (more massive)
+        velocities[:n1, 2] -= binary_orbital_speed * (n2 / n)  # Reduced by mass ratio
+        
+        # Star 2 disk (tilted, around star 2)
+        r2 = np.random.exponential(R * 0.12, n2)
+        r2 = np.clip(r2, R * 0.01, R * 0.25)
         theta2 = np.random.uniform(0, 2 * np.pi, n2)
         tilt = np.pi / 6  # 30 degree tilt
         
-        x2 = r2 * np.cos(theta2) + separation / 2
-        y2 = r2 * np.sin(theta2) * np.sin(tilt)
-        z2 = r2 * np.sin(theta2) * np.cos(tilt)
+        # Position relative to star 2 center
+        x2_local = r2 * np.cos(theta2)
+        y2_local = r2 * np.sin(theta2) * np.sin(tilt)
+        z2_local = r2 * np.sin(theta2) * np.cos(tilt)
         
-        positions[n1:, 0] = x2
-        positions[n1:, 1] = y2
-        positions[n1:, 2] = z2
+        positions[n1:, 0] = x2_local + separation / 2
+        positions[n1:, 1] = y2_local
+        positions[n1:, 2] = z2_local
         
-        orbital_speed2 = np.sqrt(G * n2 * 0.001 / (r2 + 1.0))
-        velocities[n1:, 0] = -orbital_speed2 * np.sin(theta2)
-        velocities[n1:, 2] = orbital_speed2 * np.cos(theta2) + binary_orbital
+        # Orbital speed around star 2 (Keplerian)
+        star2_mass = n2 * 0.001
+        orbital_speed2 = np.sqrt(G * star2_mass / (r2 + R * 0.01))
+        
+        # Tangential velocity around star 2 (in local coordinates)
+        vx2_local = -orbital_speed2 * np.sin(theta2)
+        vy2_local = orbital_speed2 * np.cos(theta2) * np.sin(tilt)
+        vz2_local = orbital_speed2 * np.cos(theta2) * np.cos(tilt)
+        
+        velocities[n1:, 0] = vx2_local
+        velocities[n1:, 1] = vy2_local
+        velocities[n1:, 2] = vz2_local
+        
+        # Add binary orbital motion (star 2 orbits center of mass)
+        velocities[n1:, 0] += 0
+        velocities[n1:, 2] += binary_orbital_speed * (n1 / n)  # Faster (less massive)
+        
+        # Small velocity dispersion for stability
+        sigma = np.sqrt(G * star1_mass / (R * 0.1)) * 0.05
+        velocities[:n1] += np.random.normal(0, sigma, (n1, 3))
+        velocities[n1:] += np.random.normal(0, sigma, (n2, 3))
+        
+        # Ensure center of mass velocity is zero
+        com_vel = np.sum(velocities * masses[:, np.newaxis], axis=0) / np.sum(masses)
+        velocities -= com_vel
         
     elif distribution == "elliptical":
         # Elliptical galaxy (de Vaucouleurs profile approximation)
-        # 3D triaxial ellipsoid
+        # 3D triaxial ellipsoid - pressure-supported system
         a, b, c = R * 0.5, R * 0.4, R * 0.3  # Semi-axes
         
+        # Generate positions in ellipsoid
+        # Use exponential distribution for radial profile
         r = np.random.exponential(R * 0.2, n)
+        r = np.clip(r, 0, R * 0.9)  # Keep within bounds
+        
         phi = np.random.uniform(0, 2 * np.pi, n)
         cos_theta = np.random.uniform(-1, 1, n)
         sin_theta = np.sqrt(1 - cos_theta**2)
@@ -384,41 +490,106 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         positions[:, 1] = b * r / R * cos_theta
         positions[:, 2] = c * r / R * sin_theta * np.sin(phi)
         
-        # Random velocities (pressure-supported)
-        sigma = np.sqrt(G * n * 0.0005 / R)
-        velocities = np.random.normal(0, sigma, (n, 3))
+        # Proper velocity distribution for pressure-supported elliptical
+        # Use Jeans equation: σ²(r) should decrease with radius
+        # For simplicity, use σ²(r) ≈ GM(<r) / r, but with proper scaling
+        total_mass = n * 0.001
+        
+        # Calculate distance from center (in ellipsoidal coordinates)
+        # Effective radius: r_eff = sqrt((x/a)² + (y/b)² + (z/c)²) * R
+        r_eff = np.sqrt(
+            (positions[:, 0] / a) ** 2 + 
+            (positions[:, 1] / b) ** 2 + 
+            (positions[:, 2] / c) ** 2
+        ) * R
+        
+        # Enclosed mass approximation (rough, but better than constant)
+        # Assume mass profile M(<r) ≈ M_total * (r / R_max)^(1.5) for elliptical
+        r_max = R * 0.9
+        enclosed_mass_frac = np.clip((r_eff / r_max) ** 1.5, 0.01, 1.0)
+        enclosed_mass = total_mass * enclosed_mass_frac
+        
+        # Velocity dispersion from Jeans equation
+        # σ² ≈ G * M(<r) / r_eff (with softening)
+        softening_vel = R * 0.05
+        sigma_sq = G * enclosed_mass / (r_eff + softening_vel)
+        sigma = np.sqrt(np.maximum(sigma_sq, G * total_mass / (R * 10)))  # Floor
+        
+        # Isotropic velocity distribution (pressure-supported)
+        # Generate velocities with proper magnitude
+        for i in range(n):
+            v_mag = np.abs(np.random.normal(0, sigma[i] * np.sqrt(3)))
+            
+            # Random direction (isotropic)
+            v_phi = np.random.uniform(0, 2 * np.pi)
+            v_cos_theta = np.random.uniform(-1, 1)
+            v_sin_theta = np.sqrt(1 - v_cos_theta**2)
+            
+            velocities[i, 0] = v_mag * v_sin_theta * np.cos(v_phi)
+            velocities[i, 1] = v_mag * v_cos_theta
+            velocities[i, 2] = v_mag * v_sin_theta * np.sin(v_phi)
+        
+        # Ensure center of mass velocity is zero
+        com_vel = np.sum(velocities * masses[:, np.newaxis], axis=0) / np.sum(masses)
+        velocities -= com_vel
         
     elif distribution == "bar":
-        # Barred spiral galaxy
+        # Barred spiral galaxy - physically accurate
         bar_n = n // 3
         disk_n = n - bar_n
+        softening = R * 0.025
         
         # Central bar
         bar_length = R * 0.4
         bar_r = np.random.exponential(bar_length * 0.3, bar_n)
+        bar_r = np.clip(bar_r, R * 0.01, bar_length)
         bar_theta = np.random.uniform(-np.pi/6, np.pi/6, bar_n)  # Narrow angle
         
         positions[:bar_n, 0] = bar_r * np.cos(bar_theta)
         positions[:bar_n, 1] = np.random.normal(0, R * 0.02, bar_n)
         positions[:bar_n, 2] = bar_r * np.sin(bar_theta) * 0.3  # Thin bar
         
-        bar_speed = np.sqrt(G * n * 0.0005 / (bar_r + 1))
+        # Proper rotation curve for bar
+        masses_bar = masses[:bar_n]
+        bar_speed = compute_rotation_curve(bar_r, masses_bar, G, softening)
         velocities[:bar_n, 0] = -bar_speed * np.sin(bar_theta)
         velocities[:bar_n, 2] = bar_speed * np.cos(bar_theta)
         
+        # Velocity dispersion for bar
+        radial_factor_bar = bar_r / (bar_r + softening * 2)
+        sigma_bar = bar_speed * 0.12 * radial_factor_bar
+        velocities[:bar_n, 0] += np.random.normal(0, sigma_bar, bar_n)
+        velocities[:bar_n, 1] += np.random.normal(0, sigma_bar * 0.3, bar_n)
+        velocities[:bar_n, 2] += np.random.normal(0, sigma_bar, bar_n)
+        
         # Outer spiral disk
-        disk_r = np.random.uniform(R * 0.3, R * 0.8, disk_n)
+        disk_r = np.random.exponential(R * 0.3, disk_n)
+        disk_r = np.clip(disk_r, R * 0.25, R * 0.85)  # Keep within bounds
+        
         spiral_theta = np.log(disk_r / (R * 0.1) + 1) / 0.4
         arm = np.random.randint(0, 2, disk_n)
-        disk_theta = spiral_theta + arm * np.pi + np.random.normal(0, 0.3, disk_n)
+        disk_theta = spiral_theta + arm * np.pi + np.random.normal(0, 0.25, disk_n)
         
         positions[bar_n:, 0] = disk_r * np.cos(disk_theta)
         positions[bar_n:, 1] = np.random.normal(0, R * 0.01, disk_n)
         positions[bar_n:, 2] = disk_r * np.sin(disk_theta)
         
-        disk_speed = np.sqrt(G * n * 0.001 / (disk_r + 1))
+        # Proper rotation curve for disk
+        masses_disk = masses[bar_n:]
+        disk_speed = compute_rotation_curve(disk_r, masses_disk, G, softening)
         velocities[bar_n:, 0] = -disk_speed * np.sin(disk_theta)
         velocities[bar_n:, 2] = disk_speed * np.cos(disk_theta)
+        
+        # Velocity dispersion for disk
+        radial_factor_disk = disk_r / (disk_r + softening * 2)
+        sigma_disk = disk_speed * 0.12 * radial_factor_disk
+        velocities[bar_n:, 0] += np.random.normal(0, sigma_disk, disk_n)
+        velocities[bar_n:, 1] += np.random.normal(0, sigma_disk * 0.25, disk_n)
+        velocities[bar_n:, 2] += np.random.normal(0, sigma_disk, disk_n)
+        
+        # Ensure center of mass velocity is zero
+        com_vel = np.sum(velocities * masses[:, np.newaxis], axis=0) / np.sum(masses)
+        velocities -= com_vel
         
     elif distribution == "stream":
         # Tidal stream / stellar river
@@ -522,24 +693,58 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         masses[:] = 0.1
         
     elif distribution == "explosion":
-        # Expanding supernova / explosion
-        phi = np.random.uniform(0, 2 * np.pi, n)
-        cos_theta = np.random.uniform(-1, 1, n)
-        sin_theta = np.sqrt(1 - cos_theta**2)
+        # Supernova explosion - expanding shell from dense core
+        # Start with dense central core
+        core_fraction = 0.15  # 15% in dense core
+        core_n = int(n * core_fraction)
+        shell_n = n - core_n
         
-        r = np.random.exponential(R * 0.1, n)
+        # Dense core (very small radius)
+        core_r = np.random.exponential(R * 0.02, core_n)
+        core_r = np.clip(core_r, 0, R * 0.05)
+        phi_core = np.random.uniform(0, 2 * np.pi, core_n)
+        cos_theta_core = np.random.uniform(-1, 1, core_n)
+        sin_theta_core = np.sqrt(1 - cos_theta_core**2)
         
-        positions[:, 0] = r * sin_theta * np.cos(phi)
-        positions[:, 1] = r * cos_theta
-        positions[:, 2] = r * sin_theta * np.sin(phi)
+        positions[:core_n, 0] = core_r * sin_theta_core * np.cos(phi_core)
+        positions[:core_n, 1] = core_r * cos_theta_core
+        positions[:core_n, 2] = core_r * sin_theta_core * np.sin(phi_core)
         
-        # Radial outward velocity
-        speed = 10.0 + np.random.exponential(5.0, n)
-        norm = np.sqrt(np.sum(positions**2, axis=1, keepdims=True)) + 0.01
-        velocities = positions / norm * speed[:, np.newaxis]
+        # Expanding shell (most particles)
+        # Shell starts at small radius and expands outward
+        shell_r = np.random.uniform(R * 0.05, R * 0.25, shell_n)
+        phi_shell = np.random.uniform(0, 2 * np.pi, shell_n)
+        cos_theta_shell = np.random.uniform(-1, 1, shell_n)
+        sin_theta_shell = np.sqrt(1 - cos_theta_shell**2)
         
-    elif distribution == "vortex":
-        # Swirling vortex
+        positions[core_n:, 0] = shell_r * sin_theta_shell * np.cos(phi_shell)
+        positions[core_n:, 1] = shell_r * cos_theta_shell
+        positions[core_n:, 2] = shell_r * sin_theta_shell * np.sin(phi_shell)
+        
+        # Strong radial outward velocity for ALL particles
+        # Speed increases with distance (shock wave)
+        distances = np.linalg.norm(positions, axis=1, keepdims=True) + 0.01
+        base_speed = 8.0
+        speed_multiplier = 1.0 + (distances / R) * 2.0  # Faster at larger radius
+        speed = base_speed * speed_multiplier.flatten() + np.random.exponential(3.0, n)
+        
+        # Pure radial expansion (no rotation, no jets)
+        radial_direction = positions / distances
+        velocities = radial_direction * speed[:, np.newaxis]
+        
+        # Add slight asymmetry for realism (not perfectly spherical)
+        asymmetry = np.random.normal(1.0, 0.15, (n, 3))
+        velocities *= asymmetry
+        
+        # Core particles have slightly less velocity (still expanding but slower)
+        velocities[:core_n] *= 0.6
+        
+        # Higher mass for core (remnant)
+        masses[:core_n] = 2.0
+        masses[core_n:] = 0.5
+        
+    elif distribution == "disc":
+        # Flat disc structure with rotation
         r = np.random.exponential(R * 0.3, n)
         theta = np.random.uniform(0, 2 * np.pi, n)
         z = np.random.normal(0, R * 0.1, n)
@@ -553,6 +758,71 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         velocities[:, 0] = -tangent_speed * np.sin(theta)
         velocities[:, 2] = tangent_speed * np.cos(theta)
         velocities[:, 1] = 2.0 * np.sign(z)  # Upward/downward spiral
+        
+    elif distribution == "vortex":
+        # Tornado-like vortex structure with orbital velocity
+        # Create a funnel shape: radius decreases with height
+        # Height distribution: particles spread along Y-axis
+        z = np.random.uniform(-R * 0.7, R * 0.7, n)
+        
+        # Radius decreases as we go up/down (funnel shape)
+        # Base radius at center, narrower at top/bottom
+        # Use a smoother function to avoid sharp transitions
+        height_normalized = np.abs(z) / (R * 0.7 + 0.01)
+        height_factor = 1.0 - 0.5 * height_normalized ** 1.5
+        height_factor = np.clip(height_factor, 0.15, 1.0)  # Minimum radius at edges
+        
+        # Radial distribution: exponential, scaled by height
+        base_r = np.random.exponential(R * 0.25, n)
+        r = base_r * height_factor
+        
+        # Spiral angle: particles wrap around Y-axis continuously
+        # Create a continuous spiral that wraps smoothly
+        spiral_tightness = 0.5  # Controls how many wraps per unit height
+        # Base angle from uniform distribution
+        base_theta = np.random.uniform(0, 2 * np.pi, n)
+        # Add spiral component based on height - continuous wrapping
+        spiral_wraps = z * spiral_tightness / R
+        theta = base_theta + spiral_wraps
+        
+        # Convert to Cartesian coordinates
+        positions[:, 0] = r * np.cos(theta)
+        positions[:, 1] = z
+        positions[:, 2] = r * np.sin(theta)
+        
+        # Compute orbital velocity to maintain structure
+        # Use smaller softening for tighter orbits
+        softening = R * 0.02
+        orbital_speed = compute_rotation_curve(r, masses, G, softening)
+        
+        # Ensure minimum orbital speed for stability
+        min_orbital_speed = np.sqrt(G * n * 0.0001 / (r + softening))
+        orbital_speed = np.maximum(orbital_speed, min_orbital_speed)
+        
+        # Tangential velocity (perpendicular to radius in XZ plane)
+        # This maintains the circular motion around Y-axis
+        # The spiral structure is in the initial positions, orbital velocity maintains it
+        velocities[:, 0] = -orbital_speed * np.sin(theta)
+        velocities[:, 2] = orbital_speed * np.cos(theta)
+        
+        # Very minimal vertical velocity - just enough to maintain spiral structure
+        # Use a smooth, continuous function that doesn't split at center
+        # Vertical motion should be much smaller than orbital motion
+        vertical_speed_factor = 0.05 * (r / R + 0.05)  # Very small vertical component
+        # Smooth function that's continuous through z=0 (no splitting)
+        vertical_velocity = vertical_speed_factor * orbital_speed * np.tanh(z / (R * 0.3))
+        velocities[:, 1] = vertical_velocity
+        
+        # Add minimal velocity dispersion for stability
+        # Keep dispersion small to maintain structure
+        sigma = orbital_speed * 0.03
+        velocities[:, 0] += np.random.normal(0, sigma, n)
+        velocities[:, 2] += np.random.normal(0, sigma, n)
+        velocities[:, 1] += np.random.normal(0, sigma * 0.15, n)
+        
+        # Ensure center of mass velocity is zero
+        com_vel = np.sum(velocities * masses[:, np.newaxis], axis=0) / np.sum(masses)
+        velocities -= com_vel
         
     elif distribution == "cube":
         # Cubic lattice (for testing)
@@ -618,22 +888,46 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         positions += np.random.normal(0, R * 0.01, (n, 3))
         
         # Much slower rotation to maintain shape
-        omega = 0.08  # Reduced from 0.5
-        # Rotate around the helical axis (Y-axis)
-        velocities[:half, 0] = -omega * positions[:half, 2]
-        velocities[:half, 2] = omega * positions[:half, 0]
-        velocities[half:, 0] = -omega * positions[half:, 2]
-        velocities[half:, 2] = omega * positions[half:, 0]
+        omega = 0.08  # Angular velocity (constant)
+        # Rotate around the helical axis (Y-axis) - proper tangential velocity
+        # Calculate distance from Y-axis in XZ plane (after noise)
+        r_xz = np.sqrt(positions[:, 0]**2 + positions[:, 2]**2)
+        
+        # Tangential velocity (constant angular velocity: speed = omega * r)
+        mask = r_xz > 0.01
+        # Unit tangent vector * angular speed * radius
+        velocities[mask, 0] = -omega * positions[mask, 2]  # This gives omega * r_xz speed
+        velocities[mask, 2] = omega * positions[mask, 0]
+        velocities[~mask, 0] = 0
+        velocities[~mask, 2] = 0
         
         # Add slight vertical motion along the helix
-        velocities[:, 1] = np.random.normal(0, omega * 0.3, n)
+        velocities[:, 1] = np.random.normal(0, omega * 0.2, n)  # Reduced
         
     elif distribution == "accretion_disk":
         # Black hole accretion disk with polar jets
-        disk_n = int(n * 0.85)
-        jet_n = n - disk_n
+        # Reserve particles for central black hole (bright accretion region!)
+        central_n = max(1, n // 100)  # ~1% for central black hole
+        disk_n = int((n - central_n) * 0.85)
+        jet_n = n - central_n - disk_n
         
-        # Central supermassive black hole (invisible, just mass)
+        # Central supermassive black hole - bright accretion region
+        # Generate random positions around origin
+        positions[:central_n, 0] = np.random.normal(0, R * 0.02, central_n)
+        positions[:central_n, 1] = np.random.normal(0, R * 0.02, central_n)
+        positions[:central_n, 2] = np.random.normal(0, R * 0.02, central_n)
+        
+        # Ensure center of mass is exactly at origin (critical for symmetry!)
+        masses[:central_n] = 200.0  # Very massive and bright!
+        com = np.sum(positions[:central_n] * masses[:central_n, np.newaxis], axis=0) / np.sum(masses[:central_n])
+        positions[:central_n] -= com
+        
+        # Generate random velocities and ensure center of mass velocity is zero
+        velocities[:central_n] = np.random.normal(0, 0.1, (central_n, 3))  # Small random motion
+        com_vel = np.sum(velocities[:central_n] * masses[:central_n, np.newaxis], axis=0) / np.sum(masses[:central_n])
+        velocities[:central_n] -= com_vel
+        
+        # Central mass for orbital calculations
         central_mass = 1000.0
         
         # Accretion disk
@@ -644,42 +938,44 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         # Very thin disk
         z_disk = np.random.normal(0, R * 0.01, disk_n)
         
-        positions[:disk_n, 0] = r_disk * np.cos(theta_disk)
-        positions[:disk_n, 1] = z_disk
-        positions[:disk_n, 2] = r_disk * np.sin(theta_disk)
+        positions[central_n:central_n+disk_n, 0] = r_disk * np.cos(theta_disk)
+        positions[central_n:central_n+disk_n, 1] = z_disk
+        positions[central_n:central_n+disk_n, 2] = r_disk * np.sin(theta_disk)
         
         # Keplerian rotation around central mass
         v_kep = np.sqrt(G * central_mass / (r_disk + R * 0.05))
-        velocities[:disk_n, 0] = -v_kep * np.sin(theta_disk)
-        velocities[:disk_n, 2] = v_kep * np.cos(theta_disk)
+        velocities[central_n:central_n+disk_n, 0] = -v_kep * np.sin(theta_disk)
+        velocities[central_n:central_n+disk_n, 2] = v_kep * np.cos(theta_disk)
         
         # Jets (bipolar outflow)
         if jet_n > 0:
             jet_half = jet_n // 2
             jet_lower_n = jet_n - jet_half
+            jet_start = central_n + disk_n
             
             # Upper jet
             z_jet_up = np.random.uniform(R * 0.2, R * 1.2, jet_half)
             r_jet_up = np.random.exponential(R * 0.05, jet_half)
             theta_jet_up = np.random.uniform(0, 2 * np.pi, jet_half)
             
-            positions[disk_n:disk_n+jet_half, 0] = r_jet_up * np.cos(theta_jet_up)
-            positions[disk_n:disk_n+jet_half, 1] = z_jet_up
-            positions[disk_n:disk_n+jet_half, 2] = r_jet_up * np.sin(theta_jet_up)
-            velocities[disk_n:disk_n+jet_half, 1] = 3.0  # Outflow velocity
+            positions[jet_start:jet_start+jet_half, 0] = r_jet_up * np.cos(theta_jet_up)
+            positions[jet_start:jet_start+jet_half, 1] = z_jet_up
+            positions[jet_start:jet_start+jet_half, 2] = r_jet_up * np.sin(theta_jet_up)
+            velocities[jet_start:jet_start+jet_half, 1] = 3.0  # Outflow velocity
             
             # Lower jet (generate new arrays for correct size)
             z_jet_down = np.random.uniform(R * 0.2, R * 1.2, jet_lower_n)
             r_jet_down = np.random.exponential(R * 0.05, jet_lower_n)
             theta_jet_down = np.random.uniform(0, 2 * np.pi, jet_lower_n)
             
-            positions[disk_n+jet_half:, 0] = r_jet_down * np.cos(theta_jet_down)
-            positions[disk_n+jet_half:, 1] = -z_jet_down
-            positions[disk_n+jet_half:, 2] = r_jet_down * np.sin(theta_jet_down)
-            velocities[disk_n+jet_half:, 1] = -3.0
+            positions[jet_start+jet_half:, 0] = r_jet_down * np.cos(theta_jet_down)
+            positions[jet_start+jet_half:, 1] = -z_jet_down
+            positions[jet_start+jet_half:, 2] = r_jet_down * np.sin(theta_jet_down)
+            velocities[jet_start+jet_half:, 1] = -3.0
         
-        masses[:disk_n] = 0.5
-        masses[disk_n:] = 0.1  # Jets are less massive
+        # Set masses for disk and jets (central particles already set to 200.0)
+        masses[central_n:central_n+disk_n] = 0.5  # Disk particles
+        masses[central_n+disk_n:] = 0.1  # Jets are less massive
         
     elif distribution == "torus":
         # Donut shape - particles orbit around a ring
@@ -697,52 +993,135 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
         positions[:, 1] = minor_radius * np.sin(u) * r_noise
         positions[:, 2] = (major_radius + minor_radius * np.cos(u) * r_noise) * np.sin(v)
         
-        # Orbital velocity around major axis
+        # Proper orbital velocity around major axis (tangent to major circle)
+        # Calculate the projection onto XY plane for orbital motion
+        r_xy = np.sqrt(positions[:, 0]**2 + positions[:, 2]**2)
+        # Orbital speed based on major radius
         omega = np.sqrt(G * n * 0.001 / major_radius)
-        velocities[:, 0] = -omega * positions[:, 2]
-        velocities[:, 2] = omega * positions[:, 0]
         
-        # Small random motion
-        velocities += np.random.normal(0, omega * 0.1, (n, 3))
+        # Tangential velocity in XY plane (perpendicular to radial direction)
+        # For each particle, velocity is tangent to the circle at major_radius
+        for i in range(n):
+            if r_xy[i] > 0.01:  # Avoid division by zero
+                # Unit vector in XY plane
+                x_unit = positions[i, 0] / r_xy[i]
+                z_unit = positions[i, 2] / r_xy[i]
+                # Tangent vector (rotate 90 degrees in XY plane)
+                velocities[i, 0] = -omega * z_unit
+                velocities[i, 2] = omega * x_unit
+            else:
+                velocities[i, 0] = 0
+                velocities[i, 2] = 0
+        
+        # Small random motion (much reduced)
+        velocities += np.random.normal(0, omega * 0.05, (n, 3))
         
     elif distribution == "hourglass":
         # Binary star hourglass nebula (two cones meeting at tips)
-        half = n // 2
+        # Particles orbit around central binary, maintaining hourglass shape
+        
+        # Reserve particles for central binary stars (bright and visible!)
+        binary_n = max(2, n // 200)  # ~0.5% for binary stars (at least 2)
+        nebula_n = n - binary_n
+        half = nebula_n // 2
+        
+        # Central binary stars - bright, massive, orbiting each other
+        binary_separation = R * 0.05
+        binary_n1 = binary_n // 2
+        binary_n2 = binary_n - binary_n1
+        
+        # Star 1
+        positions[:binary_n1, 0] = np.random.normal(-binary_separation/2, R * 0.01, binary_n1)
+        positions[:binary_n1, 1] = np.random.normal(0, R * 0.01, binary_n1)
+        positions[:binary_n1, 2] = np.random.normal(0, R * 0.01, binary_n1)
+        masses[:binary_n1] = 100.0  # Very massive and bright!
+        
+        # Star 2
+        positions[binary_n1:binary_n, 0] = np.random.normal(binary_separation/2, R * 0.01, binary_n2)
+        positions[binary_n1:binary_n, 1] = np.random.normal(0, R * 0.01, binary_n2)
+        positions[binary_n1:binary_n, 2] = np.random.normal(0, R * 0.01, binary_n2)
+        masses[binary_n1:binary_n] = 100.0  # Very massive and bright!
+        
+        # Ensure center of mass of binary is exactly at origin (critical for symmetry!)
+        com = np.sum(positions[:binary_n] * masses[:binary_n, np.newaxis], axis=0) / np.sum(masses[:binary_n])
+        positions[:binary_n] -= com
+        
+        # Orbital velocity around center of mass
+        v_binary = np.sqrt(G * 250.0 / binary_separation)
+        velocities[:binary_n1, 0] = 0.0
+        velocities[:binary_n1, 1] = np.random.normal(0, 0.05, binary_n1)
+        velocities[:binary_n1, 2] = v_binary + np.random.normal(0, 0.05, binary_n1)
+        
+        velocities[binary_n1:binary_n, 0] = 0.0
+        velocities[binary_n1:binary_n, 1] = np.random.normal(0, 0.05, binary_n2)
+        velocities[binary_n1:binary_n, 2] = -v_binary + np.random.normal(0, 0.05, binary_n2)
+        
+        # Ensure center of mass velocity is zero
+        com_vel = np.sum(velocities[:binary_n] * masses[:binary_n, np.newaxis], axis=0) / np.sum(masses[:binary_n])
+        velocities[:binary_n] -= com_vel
+        
+        # Central binary mass for orbital calculations
+        central_mass = 500.0
         
         # Upper cone
         z_up = np.random.uniform(0, R, half)
         r_up = z_up * 0.5 * (1 + np.random.normal(0, 0.1, half))
         theta_up = np.random.uniform(0, 2 * np.pi, half)
         
-        positions[:half, 0] = r_up * np.cos(theta_up)
-        positions[:half, 1] = z_up
-        positions[:half, 2] = r_up * np.sin(theta_up)
-        velocities[:half, 1] = 1.5  # Expanding upward
+        positions[binary_n:binary_n+half, 0] = r_up * np.cos(theta_up)
+        positions[binary_n:binary_n+half, 1] = z_up
+        positions[binary_n:binary_n+half, 2] = r_up * np.sin(theta_up)
         
         # Lower cone
-        z_down = np.random.uniform(-R, 0, n - half)
-        r_down = -z_down * 0.5 * (1 + np.random.normal(0, 0.1, n - half))
-        theta_down = np.random.uniform(0, 2 * np.pi, n - half)
+        z_down = np.random.uniform(-R, 0, nebula_n - half)
+        r_down = -z_down * 0.5 * (1 + np.random.normal(0, 0.1, nebula_n - half))
+        theta_down = np.random.uniform(0, 2 * np.pi, nebula_n - half)
         
-        positions[half:, 0] = r_down * np.cos(theta_down)
-        positions[half:, 1] = z_down
-        positions[half:, 2] = r_down * np.sin(theta_down)
-        velocities[half:, 1] = -1.5  # Expanding downward
+        positions[binary_n+half:, 0] = r_down * np.cos(theta_down)
+        positions[binary_n+half:, 1] = z_down
+        positions[binary_n+half:, 2] = r_down * np.sin(theta_down)
         
-        # Rotation
-        omega = 0.3
-        velocities[:, 0] += -omega * positions[:, 2]
-        velocities[:, 2] += omega * positions[:, 0]
+        # Proper orbital velocities around center (tangential, not radial!)
+        # Calculate distance from center in XY plane and 3D for nebula particles
+        nebula_positions = positions[binary_n:]
+        r_xy = np.sqrt(nebula_positions[:, 0]**2 + nebula_positions[:, 2]**2)
+        r_3d = np.sqrt(nebula_positions[:, 0]**2 + nebula_positions[:, 1]**2 + nebula_positions[:, 2]**2)
+        
+        # Keplerian orbital speed based on distance from center
+        v_orbital = np.sqrt(G * central_mass / (r_3d + R * 0.05))
+        
+        # Tangential velocity in XY plane (perpendicular to radial direction)
+        # For each particle, velocity is tangent to the circle in XY plane
+        mask_xy = r_xy > 0.01
+        velocities[binary_n:][mask_xy, 0] = -v_orbital[mask_xy] * nebula_positions[mask_xy, 2] / r_xy[mask_xy]
+        velocities[binary_n:][mask_xy, 2] = v_orbital[mask_xy] * nebula_positions[mask_xy, 0] / r_xy[mask_xy]
+        
+        # Particles near center (r_xy < 0.01) get zero velocity
+        velocities[binary_n:][~mask_xy, 0] = 0
+        velocities[binary_n:][~mask_xy, 2] = 0
+        
+        # Small vertical component for hourglass shape (much reduced)
+        # Particles closer to center have less vertical motion
+        vertical_factor = (r_3d / R) * 0.08
+        velocities[binary_n:, 1] = np.random.normal(0, v_orbital * vertical_factor)
+        
+        # Add small velocity dispersion
+        velocities[binary_n:] += np.random.normal(0, 0.08, (nebula_n, 3))
+        
+        masses[binary_n:] = 0.1  # Light nebula particles
         
     elif distribution == "fibonacci":
         # Fibonacci spiral (golden ratio spiral)
         golden_ratio = (1 + np.sqrt(5)) / 2
         golden_angle = 2 * np.pi / (golden_ratio ** 2)
         
+        # Central mass for orbital motion
+        central_mass = n * 0.001
+        
         for i in range(n):
             # Fibonacci spiral in spherical coords
             theta = i * golden_angle
-            r = R * np.sqrt(i / n)
+            r = R * np.sqrt(i / n) if i > 0 else R * 0.01
             
             # Map to 3D spiral
             y = (i / n - 0.5) * R * 2  # Vertical spread
@@ -751,26 +1130,42 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
             positions[i, 1] = y
             positions[i, 2] = r * np.sin(theta)
             
-            # Orbital velocity
+            # Proper orbital velocity (Keplerian, based on distance, not index!)
             if r > 0.01:
-                v = np.sqrt(G * i * 0.001 / r)
-                velocities[i, 0] = -v * np.sin(theta)
-                velocities[i, 2] = v * np.cos(theta)
+                v_orbital = np.sqrt(G * central_mass / (r + R * 0.05))
+                # Tangential velocity in XY plane (perpendicular to radial)
+                # Radial direction: (cos(theta), sin(theta))
+                # Tangent direction: (-sin(theta), cos(theta))
+                velocities[i, 0] = -v_orbital * np.sin(theta)
+                velocities[i, 2] = v_orbital * np.cos(theta)
+            else:
+                velocities[i, 0] = 0
+                velocities[i, 2] = 0
         
-        velocities += np.random.normal(0, 0.2, (n, 3))
+        velocities += np.random.normal(0, 0.05, (n, 3))  # Reduced random motion
         
     elif distribution == "triple":
-        # Three galaxies in triangular formation
+        # Three galaxies in triangular formation - physically accurate
         third = n // 3
         scale_length = R * 0.20
         softening = R * 0.02
         
         # Galaxy centers form equilateral triangle
+        # Proper separation for stable triple system
+        separation = R * 0.8  # Increased separation for stability
         centers = np.array([
-            [R * 0.6 * np.cos(0), 0, R * 0.6 * np.sin(0)],
-            [R * 0.6 * np.cos(2*np.pi/3), 0, R * 0.6 * np.sin(2*np.pi/3)],
-            [R * 0.6 * np.cos(4*np.pi/3), 0, R * 0.6 * np.sin(4*np.pi/3)],
+            [separation * np.cos(0), 0, separation * np.sin(0)],
+            [separation * np.cos(2*np.pi/3), 0, separation * np.sin(2*np.pi/3)],
+            [separation * np.cos(4*np.pi/3), 0, separation * np.sin(4*np.pi/3)],
         ])
+        
+        # Calculate proper orbital velocities for triple system
+        total_mass = n * 0.001
+        galaxy_mass = total_mass / 3
+        
+        # Orbital period for equilateral triangle configuration
+        # For three equal masses: v ≈ sqrt(G * M_total / (separation * sqrt(3)))
+        orbital_speed_common = np.sqrt(G * total_mass / (separation * np.sqrt(3)))
         
         for gal_idx in range(3):
             start = gal_idx * third
@@ -779,7 +1174,8 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
             
             # Radial distribution
             r = np.random.exponential(scale_length, gal_n)
-            r = r * (1 - np.exp(-(R * 0.35) / (r + 0.01)))
+            r = r * (1 - np.exp(-(R * 0.3) / (r + 0.01)))  # Keep galaxies compact
+            r = np.maximum(r, R * 0.001)
             theta = np.random.uniform(0, 2 * np.pi, gal_n)
             z = np.random.normal(0, R * 0.01, gal_n)
             
@@ -796,16 +1192,22 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
             velocities[start:end, 2] = orbital_speed * np.cos(theta)
             
             # Add velocity dispersion
-            sigma = orbital_speed * 0.10
+            radial_factor = r / (r + softening * 2)
+            sigma = orbital_speed * 0.12 * radial_factor + np.sqrt(G * gal_n * 0.00005)
             velocities[start:end, 0] += np.random.normal(0, sigma, gal_n)
             velocities[start:end, 1] += np.random.normal(0, sigma * 0.25, gal_n)
             velocities[start:end, 2] += np.random.normal(0, sigma, gal_n)
             
-            # Bulk motion - galaxies orbit common center
-            angle = gal_idx * 2 * np.pi / 3
-            omega_bulk = 0.15
-            velocities[start:end, 0] += -omega_bulk * centers[gal_idx, 2]
-            velocities[start:end, 2] += omega_bulk * centers[gal_idx, 0]
+            # Bulk motion - galaxies orbit common center of mass
+            # For equilateral triangle, velocity is perpendicular to position vector
+            center = centers[gal_idx]
+            # Rotate position vector 90 degrees in XY plane
+            velocities[start:end, 0] += -orbital_speed_common * center[2] / separation
+            velocities[start:end, 2] += orbital_speed_common * center[0] / separation
+        
+        # Ensure center of mass velocity is zero
+        com_vel = np.sum(velocities * masses[:, np.newaxis], axis=0) / np.sum(masses)
+        velocities -= com_vel
         
     elif distribution == "rosette":
         # Flower-like orbital rosette pattern
@@ -831,50 +1233,147 @@ def generate_distribution(distribution: str, n: int, R: float, G: float) -> Tupl
             positions[start:end, 1] = np.random.normal(0, R * 0.02, petal_n)
             positions[start:end, 2] = x_local * np.sin(angle) + z_local * np.cos(angle)
             
-            # Orbital motion
-            omega = 0.5
-            velocities[start:end, 0] = -omega * positions[start:end, 2]
-            velocities[start:end, 2] = omega * positions[start:end, 0]
+            # Proper orbital motion around center (tangential, not radial!)
+            # Calculate distance from center in XY plane and 3D
+            r_xy_petal = np.sqrt(positions[start:end, 0]**2 + positions[start:end, 2]**2)
+            r_3d_petal = np.sqrt(positions[start:end, 0]**2 + positions[start:end, 1]**2 + positions[start:end, 2]**2)
+            
+            # Orbital speed based on distance (Keplerian-like)
+            omega_base = 0.5
+            omega_petal = omega_base * np.sqrt(R * 0.3 / (r_3d_petal + R * 0.05))
+            
+            # Tangential velocity in XY plane (perpendicular to radial)
+            for j in range(petal_n):
+                idx = start + j
+                if r_xy_petal[j] > 0.01:
+                    x_unit = positions[idx, 0] / r_xy_petal[j]
+                    z_unit = positions[idx, 2] / r_xy_petal[j]
+                    # Tangent vector (rotate 90 degrees)
+                    velocities[idx, 0] = -omega_petal[j] * z_unit
+                    velocities[idx, 2] = omega_petal[j] * x_unit
+                else:
+                    velocities[idx, 0] = 0
+                    velocities[idx, 2] = 0
         
-        velocities += np.random.normal(0, 0.1, (n, 3))
+        velocities += np.random.normal(0, 0.05, (n, 3))  # Reduced random motion
         
     elif distribution == "dyson":
         # Dyson sphere - particles orbit in spherical shell
         # (like a megastructure surrounding a star)
         
+        # Reserve particles for central star (bright and visible!)
+        central_n = max(1, n // 200)  # ~0.5% for central star
+        shell_n = n - central_n
+        
+        # Central star - bright, massive, at center
+        # Generate random positions around origin
+        positions[:central_n, 0] = np.random.normal(0, R * 0.01, central_n)
+        positions[:central_n, 1] = np.random.normal(0, R * 0.01, central_n)
+        positions[:central_n, 2] = np.random.normal(0, R * 0.01, central_n)
+        
+        # Ensure center of mass is exactly at origin (critical for symmetry!)
+        masses[:central_n] = 500.0  # Very massive and bright!
+        com = np.sum(positions[:central_n] * masses[:central_n, np.newaxis], axis=0) / np.sum(masses[:central_n])
+        positions[:central_n] -= com
+        
+        # Generate random velocities and ensure center of mass velocity is zero
+        velocities[:central_n] = np.random.normal(0, 0.05, (central_n, 3))  # Small random motion
+        com_vel = np.sum(velocities[:central_n] * masses[:central_n, np.newaxis], axis=0) / np.sum(masses[:central_n])
+        velocities[:central_n] -= com_vel
+        
         # Spherical shell
-        phi = np.random.uniform(0, 2 * np.pi, n)
-        cos_theta = np.random.uniform(-1, 1, n)
+        phi = np.random.uniform(0, 2 * np.pi, shell_n)
+        cos_theta = np.random.uniform(-1, 1, shell_n)
         sin_theta = np.sqrt(1 - cos_theta**2)
         
         # Shell radius with some thickness
-        r = R * 0.7 + np.random.normal(0, R * 0.03, n)
+        r = R * 0.7 + np.random.normal(0, R * 0.03, shell_n)
         
-        positions[:, 0] = r * sin_theta * np.cos(phi)
-        positions[:, 1] = r * cos_theta
-        positions[:, 2] = r * sin_theta * np.sin(phi)
+        positions[central_n:, 0] = r * sin_theta * np.cos(phi)
+        positions[central_n:, 1] = r * cos_theta
+        positions[central_n:, 2] = r * sin_theta * np.sin(phi)
         
-        # Central star mass
-        central_mass = 5000.0
+        # Set shell particle masses first
+        masses[central_n:] = 0.1  # Light structures
         
-        # Orbital velocity for stable orbit
-        v_orbital = np.sqrt(G * central_mass / r)
+        # Calculate actual total mass for orbital calculations
+        # Central mass: sum of central particle masses
+        actual_central_mass = np.sum(masses[:central_n])
         
-        # Tangent direction (perpendicular to radial)
-        # Use cross product with random vector to get tangent
-        radial_unit = positions / (r[:, np.newaxis] + 1e-10)
+        # For each shell particle, calculate enclosed mass (central + shell particles inside its radius)
+        # Sort shell particles by radius to compute enclosed mass efficiently
+        shell_sort_idx = np.argsort(r)
+        sorted_r = r[shell_sort_idx]
+        sorted_masses = masses[central_n:][shell_sort_idx]
         
-        # Tangent in horizontal plane
-        velocities[:, 0] = -v_orbital * sin_theta * np.sin(phi)
-        velocities[:, 1] = np.zeros(n)  # No vertical component
-        velocities[:, 2] = v_orbital * sin_theta * np.cos(phi)
+        # Cumulative mass (enclosed shell mass)
+        cumulative_shell_mass = np.cumsum(sorted_masses)
         
-        # Small random motion
-        velocities[:, 0] += np.random.normal(0, v_orbital * 0.05, n)
-        velocities[:, 1] += np.random.normal(0, v_orbital * 0.05, n)
-        velocities[:, 2] += np.random.normal(0, v_orbital * 0.05, n)
+        # For each particle, total enclosed mass = central + shell particles inside radius
+        total_enclosed_mass = np.zeros(shell_n)
+        for i in range(shell_n):
+            # Find how many shell particles are inside this radius
+            mask_inside = sorted_r <= r[i]
+            enclosed_shell = np.sum(sorted_masses[mask_inside])
+            total_enclosed_mass[i] = actual_central_mass + enclosed_shell
         
-        masses[:] = 0.1  # Light structures
+        # Map back to original order
+        inverse_shell_idx = np.argsort(shell_sort_idx)
+        total_enclosed_mass = total_enclosed_mass[inverse_shell_idx]
+        
+        # Orbital velocity for stable circular orbit: v = sqrt(G * M_enclosed / r)
+        # Add softening to prevent singularity
+        softening = R * 0.01
+        v_orbital = np.sqrt(G * total_enclosed_mass / (r + softening))
+        
+        # For spherical shell, velocity should be tangential (perpendicular to radial)
+        # The tangent direction is perpendicular to radial vector in the horizontal plane
+        # Use cross product with Y-axis to get tangent vector, then normalize and scale
+        
+        shell_positions = positions[central_n:]
+        
+        # Normalize radial vectors
+        r_mags = np.linalg.norm(shell_positions, axis=1)
+        mask_valid = r_mags > 0.01
+        radial_units = shell_positions[mask_valid] / r_mags[mask_valid, np.newaxis]
+        
+        # Y-axis for cross product
+        y_axis = np.array([0.0, 1.0, 0.0])
+        
+        # Compute tangent vectors using cross product (vectorized)
+        tangent_vecs = np.cross(radial_units, y_axis)
+        tangent_mags = np.linalg.norm(tangent_vecs, axis=1)
+        
+        # Handle cases where radial is nearly parallel to Y-axis (at poles)
+        mask_poles = tangent_mags < 0.01
+        if np.any(mask_poles):
+            # Use X-axis for poles
+            x_axis = np.array([1.0, 0.0, 0.0])
+            tangent_vecs[mask_poles] = np.cross(radial_units[mask_poles], x_axis)
+            tangent_mags[mask_poles] = np.linalg.norm(tangent_vecs[mask_poles], axis=1)
+        
+        # Normalize tangent vectors
+        tangent_units = tangent_vecs / (tangent_mags[:, np.newaxis] + 1e-10)
+        
+        # Set velocities for valid particles
+        velocities[central_n:][mask_valid] = v_orbital[mask_valid, np.newaxis] * tangent_units
+        
+        # For particles very close to center, give small random velocity
+        velocities[central_n:][~mask_valid] = np.random.normal(0, 0.01, (np.sum(~mask_valid), 3))
+        
+        # Add minimal velocity dispersion perpendicular to orbital plane for stability
+        # This adds slight vertical motion while maintaining circular orbits
+        for i in range(shell_n):
+            if mask_valid[i]:
+                radial_vec = shell_positions[i]
+                vel_vec = velocities[central_n + i]
+                # Add small component perpendicular to both radial and velocity
+                vertical_component = np.cross(radial_vec, vel_vec)
+                vertical_mag = np.linalg.norm(vertical_component)
+                if vertical_mag > 0.01:
+                    vertical_unit = vertical_component / vertical_mag
+                    # Very small vertical motion (1% of orbital speed)
+                    velocities[central_n + i] += vertical_unit * np.random.normal(0, v_orbital[i] * 0.01)
         
     else:  # sphere / default
         phi = np.random.uniform(0, 2 * np.pi, n)
@@ -953,6 +1452,24 @@ PRESETS["spiral_milkyway"] = {
     "substeps": 3,
     "target_fps": 24,
     "estimated_time": "~30 minutes",
+}
+
+PRESETS["vortex_cinematic"] = {
+    "name": "Cinematic Vortex",
+    "description": "Beautiful tornado vortex with stable orbital dynamics",
+    "category": "CINEMATIC",
+    "num_bodies": 400_000,
+    "theta": 0.75,
+    "G": 0.08,
+    "softening": 2.0,
+    "damping": 0.999,
+    "spawn_radius": 600.0,
+    "distribution": "vortex",
+    "total_frames": 3000,
+    "dt_per_frame": 0.1,
+    "substeps": 4,
+    "target_fps": 24,
+    "estimated_time": "~45 minutes",
 }
 
 PRESETS["bar_galaxy"] = {
@@ -1188,12 +1705,48 @@ PRESETS["4k_vortex_artistic"] = {
     "softening": 1.5,
     "damping": 0.998,
     "spawn_radius": 500.0,
-    "distribution": "vortex",
+    "distribution": "disc",
     "total_frames": 6000,
     "dt_per_frame": 0.06,
     "substeps": 5,
     "target_fps": 60,
     "estimated_time": "~7 hours",
+}
+
+PRESETS["4k_tornado_vortex"] = {
+    "name": "4K Tornado Vortex",
+    "description": "Stunning tornado-like vortex with orbital velocity, 4K 60fps",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 500_000,
+    "theta": 0.5,
+    "G": 0.08,
+    "softening": 1.5,
+    "damping": 0.999,
+    "spawn_radius": 600.0,
+    "distribution": "vortex",
+    "total_frames": 6000,
+    "dt_per_frame": 0.05,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~8 hours",
+}
+
+PRESETS["4k_vortex_epic"] = {
+    "name": "4K Epic Vortex",
+    "description": "Massive tornado vortex, production quality",
+    "category": "CINEMATIC_4K",
+    "num_bodies": 800_000,
+    "theta": 0.5,
+    "G": 0.07,
+    "softening": 1.5,
+    "damping": 0.999,
+    "spawn_radius": 700.0,
+    "distribution": "vortex",
+    "total_frames": 7200,
+    "dt_per_frame": 0.05,
+    "substeps": 5,
+    "target_fps": 60,
+    "estimated_time": "~12 hours",
 }
 
 PRESETS["4k_supernova_burst"] = {
@@ -1202,10 +1755,10 @@ PRESETS["4k_supernova_burst"] = {
     "category": "CINEMATIC_4K",
     "num_bodies": 350_000,
     "theta": 0.5,
-    "G": 0.04,
-    "softening": 1.0,
-    "damping": 0.995,
-    "spawn_radius": 150.0,
+    "G": 0.06,
+    "softening": 1.2,
+    "damping": 1.0,  # No damping - pure expansion
+    "spawn_radius": 250.0,  # Larger radius for dramatic expansion
     "distribution": "explosion",
     "total_frames": 3600,
     "dt_per_frame": 0.05,
@@ -1252,6 +1805,24 @@ PRESETS["quick_collision"] = {
     "substeps": 1,
     "target_fps": 30,
     "estimated_time": "~25 seconds",
+}
+
+PRESETS["quick_vortex"] = {
+    "name": "Quick Vortex",
+    "description": "Fast tornado vortex simulation for testing",
+    "category": "FAST",
+    "num_bodies": 100_000,
+    "theta": 0.95,
+    "G": 0.12,
+    "softening": 2.5,
+    "damping": 0.998,
+    "spawn_radius": 400.0,
+    "distribution": "vortex",
+    "total_frames": 600,
+    "dt_per_frame": 0.15,
+    "substeps": 2,
+    "target_fps": 30,
+    "estimated_time": "~30 seconds",
 }
 
 PRESETS["mini_cluster"] = {
@@ -1376,13 +1947,13 @@ PRESETS["supernova"] = {
     "category": "CHAOS",
     "num_bodies": 150_000,
     "theta": 0.9,
-    "G": 0.05,
-    "softening": 1.0,
-    "damping": 0.99,
-    "spawn_radius": 100.0,
+    "G": 0.08,
+    "softening": 1.5,
+    "damping": 1.0,  # No damping - pure expansion
+    "spawn_radius": 200.0,  # Larger radius for expansion
     "distribution": "explosion",
     "total_frames": 1000,
-    "dt_per_frame": 0.1,
+    "dt_per_frame": 0.12,
     "substeps": 2,
     "target_fps": 30,
     "estimated_time": "~3 minutes",
@@ -1398,12 +1969,48 @@ PRESETS["cosmic_vortex"] = {
     "softening": 2.0,
     "damping": 0.995,
     "spawn_radius": 400.0,
-    "distribution": "vortex",
+    "distribution": "disc",
     "total_frames": 1500,
     "dt_per_frame": 0.12,
     "substeps": 2,
     "target_fps": 30,
     "estimated_time": "~6 minutes",
+}
+
+PRESETS["tornado_chaos"] = {
+    "name": "Tornado Chaos",
+    "description": "Wild tornado vortex with chaotic dynamics",
+    "category": "CHAOS",
+    "num_bodies": 300_000,
+    "theta": 0.9,
+    "G": 0.1,
+    "softening": 2.5,
+    "damping": 0.992,
+    "spawn_radius": 500.0,
+    "distribution": "vortex",
+    "total_frames": 2000,
+    "dt_per_frame": 0.15,
+    "substeps": 2,
+    "target_fps": 30,
+    "estimated_time": "~8 minutes",
+}
+
+PRESETS["vortex_storm"] = {
+    "name": "Vortex Storm",
+    "description": "Intense tornado-like vortex with high energy",
+    "category": "CHAOS",
+    "num_bodies": 250_000,
+    "theta": 0.85,
+    "G": 0.12,
+    "softening": 2.0,
+    "damping": 0.99,
+    "spawn_radius": 450.0,
+    "distribution": "vortex",
+    "total_frames": 1800,
+    "dt_per_frame": 0.12,
+    "substeps": 2,
+    "target_fps": 30,
+    "estimated_time": "~7 minutes",
 }
 
 PRESETS["triple_collision"] = {
@@ -1552,6 +2159,42 @@ PRESETS["black_hole"] = {
     "substeps": 3,
     "target_fps": 30,
     "estimated_time": "~6 minutes",
+}
+
+PRESETS["tornado_artistic"] = {
+    "name": "Artistic Tornado",
+    "description": "Beautiful tornado-like vortex with mesmerizing spiral",
+    "category": "ARTISTIC",
+    "num_bodies": 350_000,
+    "theta": 0.85,
+    "G": 0.09,
+    "softening": 1.8,
+    "damping": 0.998,
+    "spawn_radius": 550.0,
+    "distribution": "vortex",
+    "total_frames": 2000,
+    "dt_per_frame": 0.1,
+    "substeps": 3,
+    "target_fps": 24,
+    "estimated_time": "~12 minutes",
+}
+
+PRESETS["cosmic_tornado"] = {
+    "name": "Cosmic Tornado",
+    "description": "Stunning cosmic tornado vortex with orbital dynamics",
+    "category": "ARTISTIC",
+    "num_bodies": 400_000,
+    "theta": 0.8,
+    "G": 0.08,
+    "softening": 2.0,
+    "damping": 0.999,
+    "spawn_radius": 600.0,
+    "distribution": "vortex",
+    "total_frames": 2400,
+    "dt_per_frame": 0.1,
+    "substeps": 3,
+    "target_fps": 24,
+    "estimated_time": "~15 minutes",
 }
 
 PRESETS["cosmic_donut"] = {

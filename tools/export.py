@@ -43,6 +43,9 @@ from dataclasses import dataclass
 # Get project root (parent of tools/)
 PROJECT_ROOT = Path(__file__).parent.parent
 
+# Import shared functions from record module
+from tools.record import get_recording_dir, load_metadata, get_completed_frames as get_frame_count, load_frame
+
 
 # =============================================================================
 # EXPORT CONFIGURATION
@@ -118,30 +121,7 @@ RESOLUTION_PRESETS = {
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
-
-def get_recording_dir(session_name: str) -> Path:
-    """Get the directory for a recording session."""
-    return PROJECT_ROOT / "recordings" / session_name
-
-
-def load_metadata(rec_dir: Path) -> dict:
-    """Load recording metadata."""
-    with open(rec_dir / "metadata.json", "r") as f:
-        return json.load(f)
-
-
-def get_frame_count(rec_dir: Path) -> int:
-    """Count available frames."""
-    count = 0
-    while (rec_dir / f"frame_{count:04d}.npz").exists():
-        count += 1
-    return count
-
-
-def load_frame(rec_dir: Path, frame_idx: int) -> tuple:
-    """Load a single frame from disk."""
-    with np.load(rec_dir / f"frame_{frame_idx:04d}.npz") as data:
-        return data["positions"].copy(), data["colors"].copy()
+# (get_recording_dir, load_metadata, get_frame_count, load_frame imported from tools.record)
 
 
 def check_ffmpeg() -> bool:
@@ -225,9 +205,9 @@ class ExportCamera:
             self.radius = self.config.camera_radius * zoom_factor
         elif mode == "zoomin":
             # Constant zoom in (starts far, ends close)
-            self.theta = self.config.camera_initial_theta + frame_idx * speed * 0.2
+            self.theta = self.config.camera_initial_theta + frame_idx * speed * 0.4
             # Zoom from 2.0x to 0.4x of initial radius
-            zoom_factor = 2.0 - 1.6 * t
+            zoom_factor = 2.0 - 2.0 * t
             self.radius = self.config.camera_radius * zoom_factor
         elif mode == "cinematic":
             # Dramatic slow sweep

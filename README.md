@@ -226,7 +226,8 @@ python run_nbody.py --bodies 100000 --theta 0.8
 | `stream` | Tidal stream / stellar river |
 | `filament` | Cosmic web filament |
 | `explosion` | Expanding supernova shell |
-| `vortex` | Swirling vortex structure |
+| `disc` | Flat disc structure with rotation |
+| `vortex` | Tornado-like vortex with orbital velocity |
 | `pleiades` | Star cluster with nebulosity |
 | `double_helix` | DNA-like double helix structure |
 | `accretion_disk` | Black hole accretion disk with jets |

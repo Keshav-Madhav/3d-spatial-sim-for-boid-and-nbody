@@ -324,7 +324,15 @@ def compute_colors_by_velocity(
     num_bodies: int,
     max_speed: float
 ):
-    """Color bodies based on velocity magnitude (deep blue → red heat map)."""
+    """Color bodies based on velocity magnitude (deep blue → red heat map).
+    
+    Color distribution:
+    - 0-40%: Deep blue → Light blue (slow)
+    - 40-70%: Light blue → Cyan → White (normal to high speed - PRIMARY)
+    - 70-85%: White → Yellow (very high speed)
+    - 85-95%: Yellow → Orange (rare, extreme speed)
+    - 95-100%: Orange → Red (extremely rare, maximum speed)
+    """
     for i in prange(num_bodies):
         speed = math.sqrt(
             velocities[i, 0] ** 2 + 
@@ -334,46 +342,52 @@ def compute_colors_by_velocity(
         t = min(1.0, speed / max_speed)
         
         # Color gradient: deep blue → light blue → cyan → white → yellow → orange → red
-        # 0.0-0.2: deep blue → light blue
-        # 0.2-0.4: light blue → cyan
-        # 0.4-0.6: cyan → white
-        # 0.6-0.8: white → yellow
-        # 0.8-0.9: yellow → orange
-        # 0.9-1.0: orange → red (rare, only for extreme speeds)
+        # White at 55%, Yellow at 90%, Orange at 95%, Red at 99%
+        # White dominates 55-90% range (most particles)
         
-        if t < 0.2:
-            # Deep blue (0.0, 0.1, 0.5) → Light blue (0.3, 0.5, 0.9)
-            s = t * 5.0
-            colors[i, 0] = 0.0 + 0.3 * s
-            colors[i, 1] = 0.1 + 0.4 * s
-            colors[i, 2] = 0.5 + 0.4 * s
-        elif t < 0.4:
-            # Light blue (0.3, 0.5, 0.9) → Cyan (0.2, 0.8, 1.0)
-            s = (t - 0.2) * 5.0
-            colors[i, 0] = 0.3 - 0.1 * s
-            colors[i, 1] = 0.5 + 0.3 * s
-            colors[i, 2] = 0.9 + 0.1 * s
-        elif t < 0.6:
-            # Cyan (0.2, 0.8, 1.0) → White (1.0, 1.0, 1.0)
-            s = (t - 0.4) * 5.0
-            colors[i, 0] = 0.2 + 0.8 * s
-            colors[i, 1] = 0.8 + 0.2 * s
+        if t < 0.55:
+            # Deep blue → Light blue → Cyan → White
+            if t < 0.4:
+                # Deep blue (0.0, 0.1, 0.5) → Light blue (0.3, 0.5, 0.9)
+                s = t / 0.4
+                colors[i, 0] = 0.0 + 0.3 * s
+                colors[i, 1] = 0.1 + 0.4 * s
+                colors[i, 2] = 0.5 + 0.4 * s
+            else:
+                # Light blue → Cyan → White
+                s = (t - 0.4) / 0.15  # 0 to 1 over 0.4-0.55 range
+                if s < 0.67:
+                    # Light blue → Cyan
+                    s2 = s / 0.67
+                    colors[i, 0] = 0.3 - 0.1 * s2
+                    colors[i, 1] = 0.5 + 0.3 * s2
+                    colors[i, 2] = 0.9 + 0.1 * s2
+                else:
+                    # Cyan → White
+                    s2 = (s - 0.67) / 0.33
+                    colors[i, 0] = 0.2 + 0.8 * s2
+                    colors[i, 1] = 0.8 + 0.2 * s2
+                    colors[i, 2] = 1.0
+        elif t < 0.90:
+            # White (1.0, 1.0, 1.0) - PRIMARY RANGE
+            colors[i, 0] = 1.0
+            colors[i, 1] = 1.0
             colors[i, 2] = 1.0
-        elif t < 0.8:
+        elif t < 0.95:
             # White (1.0, 1.0, 1.0) → Yellow (1.0, 0.95, 0.0)
-            s = (t - 0.6) * 5.0
+            s = (t - 0.90) / 0.05
             colors[i, 0] = 1.0
             colors[i, 1] = 1.0 - 0.05 * s
             colors[i, 2] = 1.0 - 1.0 * s
-        elif t < 0.9:
-            # Yellow (1.0, 0.95, 0.0) → Orange (1.0, 0.5, 0.0)
-            s = (t - 0.8) * 10.0
+        elif t < 0.99:
+            # Yellow (1.0, 0.95, 0.0) → Orange (1.0, 0.5, 0.0) - RARE
+            s = (t - 0.95) / 0.04
             colors[i, 0] = 1.0
             colors[i, 1] = 0.95 - 0.45 * s
             colors[i, 2] = 0.0
         else:
-            # Orange (1.0, 0.5, 0.0) → Red (1.0, 0.0, 0.0) - RARE!
-            s = (t - 0.9) * 10.0
+            # Orange (1.0, 0.5, 0.0) → Red (1.0, 0.0, 0.0) - EXTREMELY RARE!
+            s = (t - 0.99) / 0.01
             colors[i, 0] = 1.0
             colors[i, 1] = 0.5 - 0.5 * s
             colors[i, 2] = 0.0
