@@ -351,6 +351,12 @@ class BackgroundCompressor:
         self.total_original_bytes = 0
         self.total_frames_to_compress = 0
         self.lock = threading.Lock()  # For thread-safe progress updates
+        self.compression_start_time = None
+        self.compression_times = []  # Track compression times for ETA calculation
+        self.last_compressed_count = 0
+        self.last_compression_check = None
+        self.compression_start_time = None
+        self.compression_times = []  # Track compression times for ETA calculation
     
     def start(self):
         """Start the background compression thread."""
@@ -400,8 +406,15 @@ class BackgroundCompressor:
     
     def _compress_batch(self, start_frame: int, end_frame: int):
         """Compress a batch of frames with delta compression."""
+        import time as time_module
+        
         prev_positions = None
         prev_colors = None
+        
+        # Initialize compression start time if this is the first batch
+        with self.lock:
+            if self.compression_start_time is None:
+                self.compression_start_time = time_module.time()
         
         # Load previous frame if needed for delta compression
         if start_frame > 0:
@@ -424,6 +437,9 @@ class BackgroundCompressor:
                 continue
             
             try:
+                # Track compression time for this frame
+                comp_start = time_module.time()
+                
                 # Load uncompressed - MUST use context manager to close file!
                 with np.load(uncompressed) as data:
                     positions = data['positions'].copy()  # Copy before file closes
@@ -450,8 +466,15 @@ class BackgroundCompressor:
                 
                 # Track compression stats
                 compressed_size = len(compressed_data)
-                self.total_saved_bytes += compressed_size
-                self.compressed_count += 1
+                comp_time = time_module.time() - comp_start
+                
+                with self.lock:
+                    self.total_saved_bytes += compressed_size
+                    self.compressed_count += 1
+                    # Track compression time for ETA calculation
+                    self.compression_times.append(comp_time)
+                    if len(self.compression_times) > 100:  # Keep last 100 times
+                        self.compression_times.pop(0)
                 
                 # Store for delta compression of next frame
                 prev_positions = positions.copy()
@@ -515,7 +538,7 @@ class BackgroundCompressor:
                 elapsed = time.time() - start_time
                 # Use average frame time for display (compression doesn't have frame_time)
                 avg_frame_time = sum(frame_times[-10:]) / len(frame_times[-10:]) if frame_times else 0.0
-                eta = 0.0  # No ETA during compression
+                eta = 0.0  # Render is complete, no ETA
                 
                 # Continue using the same nested progress bar
                 # Frame generation is complete, compression is progressing
@@ -575,9 +598,11 @@ def format_eta(seconds: float) -> str:
 def print_progress(frame: int, total: int, frame_time: float, elapsed: float, eta: float,
                    compressed: int = None, compressor: 'BackgroundCompressor' = None):
     """
-    Print nested progress bars (frame generation + compression overlay) and details.
+    Print nested progress bars (frame generation + compression overlay) and two detail lines.
+    Line 1: Render progress
+    Line 2: Compression progress
     """
-    pct = (frame + 1) / total * 100
+    render_pct = (frame + 1) / total * 100
     
     # Get terminal width, default to 80 if can't detect
     try:
@@ -610,22 +635,45 @@ def print_progress(frame: int, total: int, frame_time: float, elapsed: float, et
     
     bar = "".join(bar_chars)
     
-    # Details on second line
-    compression_info = ""
+    # Render details line
+    render_details = (f"Render: {render_pct:5.1f}% | Frame {frame+1:4d}/{total} | "
+                      f"Time: {format_time(frame_time, short=True):>6s} | "
+                      f"Elapsed: {format_time(elapsed):>6s} | ETA: {format_eta(eta)}")
+    
+    # Compression details line
+    compress_details = ""
     if compressed is not None and compressed >= 0:
-        compression_info = f" | Compressed: {compressed}/{total}"
+        compress_pct = (compressed / total * 100) if total > 0 else 0.0
+        
+        # Calculate compression ETA
+        compress_eta = 0.0
+        compress_elapsed = 0.0
+        if compressor is not None:
+            with compressor.lock:
+                if compressor.compression_start_time is not None:
+                    import time
+                    compress_elapsed = time.time() - compressor.compression_start_time
+                    
+                    # Calculate ETA based on compression rate
+                    if compressed > 0 and len(compressor.compression_times) > 0:
+                        avg_comp_time = sum(compressor.compression_times[-20:]) / len(compressor.compression_times[-20:])
+                        remaining_frames = total - compressed
+                        compress_eta = avg_comp_time * remaining_frames
+        
+        compress_details = (f"Compress: {compress_pct:5.1f}% | Frame {compressed:4d}/{total} | "
+                           f"Elapsed: {format_time(compress_elapsed):>6s} | "
+                           f"ETA: {format_eta(compress_eta)}")
+    else:
+        compress_details = "Compress: Waiting for frames..."
     
-    details = (f"{pct:5.1f}% | Frame {frame+1:4d}/{total}{compression_info} | "
-               f"Time: {format_time(frame_time, short=True):>6s} | "
-               f"Elapsed: {format_time(elapsed):>6s} | ETA: {format_eta(eta)}")
-    
-    # Move cursor up 2 lines, clear, and print both lines
-    # Use ANSI escape codes: \033[2A moves up 2 lines, \033[K clears line
+    # Move cursor up 3 lines (bar + render + compress), clear, and print all three lines
+    # Use ANSI escape codes: \033[3A moves up 3 lines, \033[K clears line
     if frame > 0:
-        sys.stdout.write("\033[2A")  # Move up 2 lines
+        sys.stdout.write("\033[3A")  # Move up 3 lines
     
     sys.stdout.write(f"\033[K[{bar}]\n")  # Clear line and print bar
-    sys.stdout.write(f"\033[K{details}\n")  # Clear line and print details
+    sys.stdout.write(f"\033[K{render_details}\n")  # Clear line and print render details
+    sys.stdout.write(f"\033[K{compress_details}\n")  # Clear line and print compress details
     sys.stdout.flush()
 
 
@@ -846,9 +894,10 @@ def record(config: dict, resume: bool = False):
         compressor.stop()
         
         # Clear the progress bar and show completion
-        sys.stdout.write("\033[2A")  # Move up 2 lines (progress bar + details)
+        sys.stdout.write("\033[3A")  # Move up 3 lines (progress bar + render + compress)
         sys.stdout.write("\033[K")  # Clear progress bar line
-        sys.stdout.write("\033[K")  # Clear details line
+        sys.stdout.write("\033[K")  # Clear render details line
+        sys.stdout.write("\033[K")  # Clear compress details line
         sys.stdout.flush()
         
         # Print compression stats

@@ -157,27 +157,31 @@ kernel void compute_colors(
     float speed = length(vel);
     float t = clamp(speed / max_speed, 0.0f, 1.0f);
     
-    // Color gradient: deep blue → light blue → cyan → white → yellow → orange → red
-    // White at 55%, Yellow at 90%, Orange at 95%, Red at 99%
-    // White dominates 55-90% range (most particles)
+    // Color gradient: bright purple-blue → blue → light blue → cyan → white → yellow → orange → red
+    // Minimum brightness increased for visibility against black background
+    // More color variation in slow range for better differentiation
     float3 color;
     
     if (t < 0.55f) {
-        // Deep blue → Light blue → Cyan → White
-        if (t < 0.4f) {
-            // Deep blue (0.0, 0.1, 0.5) → Light blue (0.3, 0.5, 0.9)
-            float s = t / 0.4f;
-            color = float3(0.0f + 0.3f * s, 0.1f + 0.4f * s, 0.5f + 0.4f * s);
+        if (t < 0.15f) {
+            // Bright purple-blue (0.4, 0.2, 0.8) → Blue (0.2, 0.4, 0.9)
+            // Very slow bodies: bright enough to see, purple tint distinguishes them
+            float s = t / 0.15f;
+            color = float3(0.4f - 0.2f * s, 0.2f + 0.2f * s, 0.8f + 0.1f * s);
+        } else if (t < 0.30f) {
+            // Blue (0.2, 0.4, 0.9) → Light blue (0.3, 0.5, 0.95)
+            float s = (t - 0.15f) / 0.15f;
+            color = float3(0.2f + 0.1f * s, 0.4f + 0.1f * s, 0.9f + 0.05f * s);
         } else {
             // Light blue → Cyan → White
-            float s = (t - 0.4f) / 0.15f;
-            if (s < 0.67f) {
+            float s = (t - 0.30f) / 0.25f;
+            if (s < 0.6f) {
                 // Light blue → Cyan
-                float s2 = s / 0.67f;
-                color = float3(0.3f - 0.1f * s2, 0.5f + 0.3f * s2, 0.9f + 0.1f * s2);
+                float s2 = s / 0.6f;
+                color = float3(0.3f - 0.1f * s2, 0.5f + 0.3f * s2, 0.95f + 0.05f * s2);
             } else {
                 // Cyan → White
-                float s2 = (s - 0.67f) / 0.33f;
+                float s2 = (s - 0.6f) / 0.4f;
                 color = float3(0.2f + 0.8f * s2, 0.8f + 0.2f * s2, 1.0f);
             }
         }

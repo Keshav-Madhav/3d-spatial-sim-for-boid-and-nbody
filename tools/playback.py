@@ -6,9 +6,12 @@ Plays back recorded simulation frames at any FPS.
 For video export, use: python -m tools.export
 
 Usage:
-    python -m tools.playback <session_name>              # Playback at default FPS
-    python -m tools.playback <session_name> --fps 60    # Custom FPS
-    python -m tools.playback <session_name> --loop      # Loop playback
+    python -m tools.playback <session_name>                    # Playback with defaults
+    python -m tools.playback <session_name> --fps 60           # Custom FPS
+    python -m tools.playback <session_name> --speed 2.0       # 2x playback speed
+    python -m tools.playback <session_name> --point-size 2.0  # Larger particles
+    python -m tools.playback <session_name> --zoom 600         # Closer camera view
+    python -m tools.playback <session_name> --loop             # Loop playback
 
 Controls during playback:
     Mouse drag  - Rotate camera (full 360°)
@@ -116,10 +119,14 @@ class PlaybackCamera:
 class PlaybackApp:
     """Playback application for recorded N-body simulations."""
     
-    def __init__(self, session_name: str, fps: int = 30, loop: bool = False):
+    def __init__(self, session_name: str, fps: int = 30, loop: bool = False,
+                 initial_speed: float = 1.0, point_size: float = 1.5,
+                 camera_radius: float = 800.0, camera_theta: float = 45.0,
+                 camera_phi: float = 25.0):
         self.session_name = session_name
         self.target_fps = fps
         self.loop = loop
+        self.point_size = point_size
         
         self.rec_dir = get_recording_dir(session_name)
         if not self.rec_dir.exists():
@@ -175,6 +182,10 @@ class PlaybackApp:
         pygame.display.set_caption(f"N-Body Playback: {session_name}")
         
         self.camera = PlaybackCamera()
+        # Set initial camera position
+        self.camera.radius = camera_radius
+        self.camera.theta = camera_theta
+        self.camera.phi = camera_phi
         self.clock = pygame.time.Clock()
         
         self.mouse_dragging = False
@@ -183,7 +194,7 @@ class PlaybackApp:
         
         self.current_frame = 0
         self.playing = True
-        self.speed = 1.0
+        self.speed = initial_speed
         self.running = True
         
         self._vbo_positions = None
@@ -282,19 +293,34 @@ class PlaybackApp:
         """Background thread that preloads frames ahead of current playback."""
         prev_positions = None
         prev_colors = None
+        last_current_frame = -1
         
         while self.preload_running:
             try:
                 # Get current frame and preload ahead
                 current = self.current_frame
                 
+                # If we looped back (current frame decreased significantly), reset state
+                if current < last_current_frame - 10:  # Detect wrap-around
+                    prev_positions = None
+                    prev_colors = None
+                
+                last_current_frame = current
+                
                 # Preload frames ahead (next 30 frames for smooth playback)
                 for offset in range(1, 31):
                     frame_idx = current + offset
                     
-                    # Stop if we've reached the end
+                    # Handle looping: if we've reached the end and looping is enabled, wrap around
                     if frame_idx >= self.frame_count:
-                        break
+                        if self.loop:
+                            frame_idx = frame_idx % self.frame_count
+                            # When wrapping to frame 0, reset prev frame state
+                            if frame_idx == 0:
+                                prev_positions = None
+                                prev_colors = None
+                        else:
+                            break
                     
                     # Check if already cached
                     with self.cache_lock:
@@ -381,7 +407,7 @@ class PlaybackApp:
         glEnable(GL_POINT_SMOOTH)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE)
-        glPointSize(1.5)
+        glPointSize(self.point_size)
         
         if self._vbos_initialized:
             self._vbo_positions.set_array(positions)
@@ -473,6 +499,8 @@ class PlaybackApp:
     
     def run(self):
         print(f"\n[Playback] Starting at {self.target_fps} FPS")
+        print(f"[Playback] Initial speed: {self.speed:.1f}x | Point size: {self.point_size:.1f}")
+        print(f"[Playback] Camera: zoom={self.camera.radius:.0f}, angle={self.camera.phi:.0f}°, theta={self.camera.theta:.0f}°")
         print("[Playback] Controls: SPACE=pause, ←→=frame, ↑↓=speed, WASD/QE=camera, ESC=quit\n")
         
         frame_accumulator = 0.0
@@ -494,9 +522,11 @@ class PlaybackApp:
                         if self.current_frame >= self.frame_count:
                             if self.loop:
                                 self.current_frame = 0
+                                frame_accumulator = 0.0  # Reset accumulator when looping
                             else:
                                 self.current_frame = self.frame_count - 1
                                 self.playing = False
+                                break  # Stop advancing frames
                 
                 self._render()
         finally:
@@ -511,11 +541,38 @@ class PlaybackApp:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="N-Body recording playback")
-    parser.add_argument("session", nargs="?", default="galaxy_1m", help="Recording session name")
-    parser.add_argument("--fps", type=int, default=30, help="Playback FPS")
-    parser.add_argument("--loop", action="store_true", help="Loop playback")
-    parser.add_argument("--export", action="store_true", help="(Deprecated) Use: python -m tools.export")
+    parser = argparse.ArgumentParser(
+        description="N-Body recording playback",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python -m tools.playback session_name                    # Default settings
+  python -m tools.playback session_name --fps 60           # 60 FPS playback
+  python -m tools.playback session_name --speed 2.0        # 2x playback speed
+  python -m tools.playback session_name --point-size 2.0   # Larger particles
+  python -m tools.playback session_name --zoom 600         # Closer view
+        """
+    )
+    parser.add_argument("session", nargs="?", help="Recording session name")
+    parser.add_argument("--fps", type=int, default=30,
+                        help="Playback FPS (default: 30)")
+    parser.add_argument("--loop", action="store_true",
+                        help="Loop playback")
+    parser.add_argument("--speed", type=float, default=1.0,
+                        help="Initial playback speed multiplier (default: 1.0, range: 0.1-4.0)")
+    parser.add_argument("--point-size", type=float, default=1.5,
+                        help="Particle point size (default: 1.5, range: 0.5-5.0)")
+    parser.add_argument("--zoom", type=float, default=800.0,
+                        help="Camera zoom level / distance from center (default: 800.0, lower=closer)")
+    parser.add_argument("--camera-angle", type=float, default=25.0,
+                        help="Camera vertical angle (0=horizon, 90=top-down, default: 25.0)")
+    parser.add_argument("--camera-theta", type=float, default=45.0,
+                        help="Camera horizontal starting angle in degrees (default: 45.0)")
+    parser.add_argument("-i", "--interactive", action="store_true",
+                        help="Interactive mode with prompts")
+    parser.add_argument("--export", action="store_true",
+                        help="(Deprecated) Use: python -m tools.export")
+    
     args = parser.parse_args()
     
     if args.export:
@@ -524,8 +581,156 @@ def main():
         print("[Playback] Run: python -m tools.export --help for options")
         return
     
-    app = PlaybackApp(args.session, fps=args.fps, loop=args.loop)
+    if not args.session:
+        print("[Playback] Error: Session name required")
+        print("[Playback] Usage: python -m tools.playback <session_name> [options]")
+        print("[Playback]        python -m tools.playback <session_name> -i    (interactive mode)")
+        print("[Playback] Run: python -m tools.playback --help for options")
+        return
+    
+    # Interactive mode if -i flag or no options provided
+    use_interactive = args.interactive or (
+        args.fps == 30 and not args.loop and args.point_size == 1.5
+    )
+    
+    if use_interactive:
+        config = interactive_playback_config(args.session)
+        if config is None:
+            return
+        fps = config['fps']
+        loop = config['loop']
+        speed = config['speed']
+        point_size = config['point_size']
+        zoom = config['zoom']
+        camera_angle = config['camera_angle']
+        camera_theta = config['camera_theta']
+    else:
+        # Use command line arguments
+        fps = args.fps
+        loop = args.loop
+        speed = args.speed
+        point_size = args.point_size
+        zoom = args.zoom
+        camera_angle = args.camera_angle
+        camera_theta = args.camera_theta
+    
+    # Validate arguments
+    if speed < 0.1 or speed > 4.0:
+        print(f"[Playback] Warning: Speed {speed} out of range, clamping to 0.1-4.0")
+        speed = max(0.1, min(4.0, speed))
+    
+    if point_size < 0.5 or point_size > 5.0:
+        print(f"[Playback] Warning: Point size {point_size} out of range, clamping to 0.5-5.0")
+        point_size = max(0.5, min(5.0, point_size))
+    
+    app = PlaybackApp(
+        args.session,
+        fps=fps,
+        loop=loop,
+        initial_speed=speed,
+        point_size=point_size,
+        camera_radius=zoom,
+        camera_theta=camera_theta,
+        camera_phi=camera_angle
+    )
     app.run()
+
+
+def interactive_playback_config(session_name: str) -> dict:
+    """Interactive playback configuration with prompts."""
+    from tools.record import get_recording_dir, load_metadata, get_completed_frames as get_frame_count
+    
+    rec_dir = get_recording_dir(session_name)
+    metadata = load_metadata(rec_dir)
+    frame_count = get_frame_count(rec_dir)
+    
+    print(f"\n{'=' * 60}")
+    print(f"  PLAYBACK: {session_name}")
+    print(f"{'=' * 60}")
+    print(f"  Bodies: {metadata.get('num_bodies', 'unknown'):,}")
+    print(f"  Frames: {frame_count}")
+    print(f"  Distribution: {metadata.get('distribution', 'unknown')}")
+    
+    config = {
+        'fps': 30,
+        'loop': False,
+        'speed': 1.0,
+        'point_size': 1.5,
+        'zoom': 800.0,
+        'camera_angle': 25.0,
+        'camera_theta': 45.0
+    }
+    
+    try:
+        # FPS selection
+        print(f"\n{'─' * 60}")
+        print("  FPS")
+        print(f"{'─' * 60}")
+        print("  Common: 24 (cinema), 30 (standard), 60 (smooth), 120 (high)")
+        fps_input = input(f"  FPS (Enter=30): ").strip()
+        if fps_input:
+            try:
+                config['fps'] = int(fps_input)
+                print(f"    → FPS: {config['fps']}")
+            except ValueError:
+                config['fps'] = 30
+        else:
+            config['fps'] = 30
+        
+        # Loop mode
+        print(f"\n{'─' * 60}")
+        print("  LOOP MODE")
+        print(f"{'─' * 60}")
+        print("  Loop playback when reaching the end?")
+        loop_input = input(f"  Loop? [y/N]: ").strip().lower()
+        if loop_input in ['y', 'yes']:
+            config['loop'] = True
+            print(f"    → Loop: Enabled")
+        else:
+            config['loop'] = False
+        
+        # Point size
+        print(f"\n{'─' * 60}")
+        print("  POINT SIZE")
+        print(f"{'─' * 60}")
+        print("  Size of particles:")
+        print("    1.0  - Small")
+        print("    1.5  - Medium (default)")
+        print("    2.0  - Large")
+        print("    3.0  - Very large")
+        point_input = input(f"\n  Point size (Enter=1.5): ").strip()
+        if point_input:
+            try:
+                config['point_size'] = float(point_input)
+                config['point_size'] = max(0.5, min(5.0, config['point_size']))
+                print(f"    → Point size: {config['point_size']}")
+            except ValueError:
+                config['point_size'] = 1.5
+        else:
+            config['point_size'] = 1.5
+        
+        # Summary
+        print(f"\n{'=' * 60}")
+        print("  PLAYBACK SETTINGS")
+        print(f"{'=' * 60}")
+        print(f"  Session:    {session_name}")
+        print(f"  FPS:        {config['fps']}")
+        print(f"  Loop:       {'Yes' if config['loop'] else 'No'}")
+        print(f"  Point size: {config['point_size']}")
+        
+        duration = frame_count / config['fps']
+        print(f"  Duration:   {duration:.1f}s ({frame_count} frames @ {config['fps']}fps)")
+        
+        confirm = input(f"\n  Start playback? [Y/n]: ").strip().lower()
+        if confirm in ['', 'y', 'yes']:
+            return config
+        else:
+            print("  Cancelled.")
+            return None
+            
+    except KeyboardInterrupt:
+        print("\n  Cancelled.")
+        return None
 
 
 if __name__ == "__main__":

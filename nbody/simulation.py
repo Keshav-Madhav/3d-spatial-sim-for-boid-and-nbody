@@ -324,14 +324,15 @@ def compute_colors_by_velocity(
     num_bodies: int,
     max_speed: float
 ):
-    """Color bodies based on velocity magnitude (deep blue → red heat map).
+    """Color bodies based on velocity magnitude (bright blue-purple → red heat map).
     
     Color distribution:
-    - 0-40%: Deep blue → Light blue (slow)
-    - 40-70%: Light blue → Cyan → White (normal to high speed - PRIMARY)
-    - 70-85%: White → Yellow (very high speed)
-    - 85-95%: Yellow → Orange (rare, extreme speed)
-    - 95-100%: Orange → Red (extremely rare, maximum speed)
+    - 0-30%: Bright purple-blue → Blue → Light blue (slow, visible against black)
+    - 30-55%: Light blue → Cyan → White (normal speed)
+    - 55-90%: White (high speed - PRIMARY)
+    - 90-95%: White → Yellow (very high speed)
+    - 95-99%: Yellow → Orange (rare, extreme speed)
+    - 99-100%: Orange → Red (extremely rare, maximum speed)
     """
     for i in prange(num_bodies):
         speed = math.sqrt(
@@ -341,30 +342,36 @@ def compute_colors_by_velocity(
         )
         t = min(1.0, speed / max_speed)
         
-        # Color gradient: deep blue → light blue → cyan → white → yellow → orange → red
-        # White at 55%, Yellow at 90%, Orange at 95%, Red at 99%
-        # White dominates 55-90% range (most particles)
+        # Color gradient: bright purple-blue → blue → light blue → cyan → white → yellow → orange → red
+        # Minimum brightness increased to ensure visibility against black background
+        # More color variation in slow range for better differentiation
         
         if t < 0.55:
-            # Deep blue → Light blue → Cyan → White
-            if t < 0.4:
-                # Deep blue (0.0, 0.1, 0.5) → Light blue (0.3, 0.5, 0.9)
-                s = t / 0.4
-                colors[i, 0] = 0.0 + 0.3 * s
-                colors[i, 1] = 0.1 + 0.4 * s
-                colors[i, 2] = 0.5 + 0.4 * s
+            if t < 0.15:
+                # Bright purple-blue (0.4, 0.2, 0.8) → Blue (0.2, 0.4, 0.9)
+                # Very slow bodies: bright enough to see, purple tint distinguishes them
+                s = t / 0.15
+                colors[i, 0] = 0.4 - 0.2 * s
+                colors[i, 1] = 0.2 + 0.2 * s
+                colors[i, 2] = 0.8 + 0.1 * s
+            elif t < 0.30:
+                # Blue (0.2, 0.4, 0.9) → Light blue (0.3, 0.5, 0.95)
+                s = (t - 0.15) / 0.15
+                colors[i, 0] = 0.2 + 0.1 * s
+                colors[i, 1] = 0.4 + 0.1 * s
+                colors[i, 2] = 0.9 + 0.05 * s
             else:
                 # Light blue → Cyan → White
-                s = (t - 0.4) / 0.15  # 0 to 1 over 0.4-0.55 range
-                if s < 0.67:
+                s = (t - 0.30) / 0.25  # 0 to 1 over 0.30-0.55 range
+                if s < 0.6:
                     # Light blue → Cyan
-                    s2 = s / 0.67
+                    s2 = s / 0.6
                     colors[i, 0] = 0.3 - 0.1 * s2
                     colors[i, 1] = 0.5 + 0.3 * s2
-                    colors[i, 2] = 0.9 + 0.1 * s2
+                    colors[i, 2] = 0.95 + 0.05 * s2
                 else:
                     # Cyan → White
-                    s2 = (s - 0.67) / 0.33
+                    s2 = (s - 0.6) / 0.4
                     colors[i, 0] = 0.2 + 0.8 * s2
                     colors[i, 1] = 0.8 + 0.2 * s2
                     colors[i, 2] = 1.0
