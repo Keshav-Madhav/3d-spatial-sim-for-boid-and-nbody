@@ -491,6 +491,16 @@ class VideoExporter:
         
         start_time = time.time()
         
+        # Maintain previous frame state for efficient delta decompression
+        # Load first frame to initialize prev state
+        prev_positions = None
+        prev_colors = None
+        
+        # If starting from frame 0, we can load it first to initialize prev state
+        if self.start_frame > 0:
+            # Load the frame before start_frame to initialize prev state
+            prev_positions, prev_colors = load_frame(self.rec_dir, self.start_frame - 1)
+        
         try:
             for i, frame_idx in enumerate(range(self.start_frame, self.end_frame)):
                 # Handle pygame events (allows window to be responsive)
@@ -501,8 +511,12 @@ class VideoExporter:
                         pygame.quit()
                         return False
                 
-                # Load frame data
-                positions, colors = load_frame(self.rec_dir, frame_idx)
+                # Load frame data (use previous frame for faster delta decompression)
+                positions, colors = load_frame(self.rec_dir, frame_idx, prev_positions, prev_colors)
+                
+                # Store for next frame's delta decompression
+                prev_positions = positions.copy()
+                prev_colors = colors.copy()
                 
                 # Update camera
                 self.camera.update(i, self.export_frames)
@@ -668,11 +682,13 @@ Camera Modes:
                         choices=["fixed", "orbit", "spiral", "zoom", "zoomout", "zoomin", "cinematic", "flyby", "topdown"],
                         help="Camera animation mode (default: orbit)")
     parser.add_argument("--camera-speed", type=float, default=0.3,
-                        help="Camera rotation speed in degrees/frame")
+                        help="Camera rotation speed in degrees/frame (default: 0.3)")
     parser.add_argument("--camera-radius", type=float, default=800.0,
-                        help="Camera distance from center")
+                        help="Camera distance from center / zoom level (default: 800.0, lower=closer)")
     parser.add_argument("--camera-angle", type=float, default=25.0,
-                        help="Camera vertical angle (0=horizon, 90=top-down)")
+                        help="Camera vertical angle (0=horizon, 90=top-down, default: 25.0)")
+    parser.add_argument("--camera-theta", type=float, default=45.0,
+                        help="Camera horizontal starting angle in degrees (default: 45.0)")
     
     # Rendering settings
     parser.add_argument("--point-size", type=float, default=1.5,
@@ -736,6 +752,7 @@ Camera Modes:
         config.camera_rotation_speed = args.camera_speed
         config.camera_radius = args.camera_radius
         config.camera_initial_phi = args.camera_angle
+        config.camera_initial_theta = args.camera_theta
         
         # Rendering
         config.point_size = args.point_size
@@ -830,6 +847,83 @@ def interactive_export_config(session_name: str) -> Optional[ExportConfig]:
         else:
             config.camera_initial_phi = 25.0
         
+        # Camera zoom level (radius)
+        print(f"\n{'─' * 60}")
+        print("  CAMERA ZOOM LEVEL")
+        print(f"{'─' * 60}")
+        print("  Distance from center (lower = closer, higher = farther):")
+        print("    400  - Very close")
+        print("    800  - Medium distance (default)")
+        print("    1200 - Far away")
+        print("    2000 - Very far")
+        zoom_input = input(f"\n  Zoom level / radius (Enter=800): ").strip()
+        if zoom_input:
+            try:
+                config.camera_radius = float(zoom_input)
+                print(f"    → Zoom: {config.camera_radius}")
+            except ValueError:
+                config.camera_radius = 800.0
+        else:
+            config.camera_radius = 800.0
+        
+        # Camera orbit speed (if orbit mode)
+        if config.camera_mode in ["orbit", "spiral", "zoom", "zoomout", "zoomin", "cinematic", "topdown"]:
+            print(f"\n{'─' * 60}")
+            print("  ORBIT ROTATION SPEED")
+            print(f"{'─' * 60}")
+            print("  How fast the camera rotates (degrees per frame):")
+            print("    0.1  - Very slow")
+            print("    0.3  - Normal speed (default)")
+            print("    0.5  - Fast")
+            print("    1.0  - Very fast")
+            speed_input = input(f"\n  Rotation speed (Enter=0.3): ").strip()
+            if speed_input:
+                try:
+                    config.camera_rotation_speed = float(speed_input)
+                    print(f"    → Speed: {config.camera_rotation_speed}°/frame")
+                except ValueError:
+                    config.camera_rotation_speed = 0.3
+            else:
+                config.camera_rotation_speed = 0.3
+        
+        # Camera horizontal starting angle
+        print(f"\n{'─' * 60}")
+        print("  CAMERA STARTING POSITION")
+        print(f"{'─' * 60}")
+        print("  Horizontal starting angle (where camera starts orbiting from):")
+        print("    0°   - Front view")
+        print("    45°  - Diagonal front (default)")
+        print("    90°  - Side view")
+        print("    180° - Back view")
+        theta_input = input(f"\n  Starting angle in degrees (Enter=45): ").strip()
+        if theta_input:
+            try:
+                config.camera_initial_theta = float(theta_input)
+                print(f"    → Starting angle: {config.camera_initial_theta}°")
+            except ValueError:
+                config.camera_initial_theta = 45.0
+        else:
+            config.camera_initial_theta = 45.0
+        
+        # Point size (rendering)
+        print(f"\n{'─' * 60}")
+        print("  POINT SIZE")
+        print(f"{'─' * 60}")
+        print("  Size of particles in the render:")
+        print("    1.0  - Small")
+        print("    1.5  - Medium (default)")
+        print("    2.0  - Large")
+        print("    3.0  - Very large")
+        point_input = input(f"\n  Point size (Enter=1.5): ").strip()
+        if point_input:
+            try:
+                config.point_size = float(point_input)
+                print(f"    → Point size: {config.point_size}")
+            except ValueError:
+                config.point_size = 1.5
+        else:
+            config.point_size = 1.5
+        
         # FPS selection
         print(f"\n{'─' * 60}")
         print("  FPS")
@@ -921,11 +1015,17 @@ def interactive_export_config(session_name: str) -> Optional[ExportConfig]:
         print("  EXPORT SETTINGS")
         print(f"{'=' * 60}")
         print(f"  Session:    {session_name}")
-        print(f"  Camera:     {config.camera_mode} (angle: {config.camera_initial_phi}°)")
+        print(f"  Camera:     {config.camera_mode}")
+        print(f"    Angle:    {config.camera_initial_phi}° (vertical)")
+        print(f"    Start:    {config.camera_initial_theta}° (horizontal)")
+        print(f"    Zoom:     {config.camera_radius}")
+        if config.camera_mode != "fixed":
+            print(f"    Speed:    {config.camera_rotation_speed}°/frame")
         print(f"  FPS:        {config.fps}")
         print(f"  Resolution: {config.resolution[0]}x{config.resolution[1]}")
         print(f"  Quality:    {config.quality_preset}")
         print(f"  Codec:      {config.codec}")
+        print(f"  Point size: {config.point_size}")
         
         duration = frame_count / config.fps
         print(f"  Duration:   {duration:.1f}s ({frame_count} frames)")

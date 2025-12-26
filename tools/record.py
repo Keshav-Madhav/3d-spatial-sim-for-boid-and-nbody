@@ -104,6 +104,8 @@ def load_frame(rec_dir: Path, frame_idx: int, prev_positions: np.ndarray = None,
     If the frame uses delta compression and prev_positions/prev_colors are not provided,
     this function will automatically load the previous frame(s) as needed.
     
+    Uses iterative loading instead of recursion to avoid stack overflow.
+    
     Args:
         rec_dir: Recording directory
         frame_idx: Frame index
@@ -124,10 +126,78 @@ def load_frame(rec_dir: Path, frame_idx: int, prev_positions: np.ndarray = None,
         if len(compressed_data) > 0:
             comp_format = struct.unpack('B', compressed_data[0:1])[0]
             
-            # If delta-compressed and we don't have previous frame, load it
+            # If delta-compressed and we don't have previous frame, load it iteratively
             if comp_format == 2 and (prev_positions is None or prev_colors is None):
                 if frame_idx > 0:
-                    prev_positions, prev_colors = load_frame(rec_dir, frame_idx - 1)
+                    # Iteratively load frames backwards until we find a base frame (format 1)
+                    # This avoids recursion depth issues
+                    current_idx = frame_idx - 1
+                    prev_positions = None
+                    prev_colors = None
+                    
+                    # Collect frames we need to decompress (in reverse order)
+                    frames_to_decompress = []
+                    
+                    # Load frames backwards until we find a base frame (format 1) or uncompressed frame
+                    while current_idx >= 0:
+                        prev_zstd = rec_dir / f"frame_{current_idx:04d}.zstd"
+                        prev_npz = rec_dir / f"frame_{current_idx:04d}.npz"
+                        
+                        if prev_zstd.exists():
+                            with open(prev_zstd, 'rb') as f:
+                                prev_data = f.read()
+                            if len(prev_data) > 0:
+                                prev_format = struct.unpack('B', prev_data[0:1])[0]
+                                frames_to_decompress.append((current_idx, prev_data, prev_format))
+                                
+                                # If this is a base frame (format 1), we can stop
+                                if prev_format == 1:
+                                    break
+                                
+                                # Otherwise, continue backwards
+                                current_idx -= 1
+                            else:
+                                break
+                        elif prev_npz.exists():
+                            # Uncompressed frame - load it directly as base
+                            with np.load(prev_npz) as data:
+                                prev_positions = data["positions"].copy()
+                                prev_colors = data["colors"].copy()
+                            break
+                        else:
+                            raise FileNotFoundError(f"Frame {current_idx:04d} not found (needed for delta decompression)")
+                    
+                    # If we collected frames to decompress, decompress them forward from base
+                    if prev_positions is None and frames_to_decompress:
+                        # frames_to_decompress is collected backwards: [frame_idx-1, frame_idx-2, ..., 0]
+                        # So frames_to_decompress[0] = frame_idx-1, frames_to_decompress[-1] = 0
+                        # We need to decompress forward: 0 -> 1 -> ... -> frame_idx-1
+                        # So iterate from last to first (reverse order)
+                        
+                        base_found = False
+                        base_idx = -1
+                        
+                        # Find the base frame (format 1) - should be frame 0 or earliest format 1 frame
+                        for i in range(len(frames_to_decompress) - 1, -1, -1):
+                            idx, data, fmt = frames_to_decompress[i]
+                            if fmt == 1:
+                                # This is the base frame - decompress it first
+                                prev_positions, prev_colors = decompress_frame(data, None, None)
+                                base_found = True
+                                base_idx = idx
+                                break
+                        
+                        if not base_found:
+                            raise ValueError(f"Frame {frame_idx:04d} appears to be delta-compressed but no base frame (format 1) found")
+                        
+                        # Decompress frames forward from the base up to frame_idx-1
+                        # Iterate from base_idx+1 to frame_idx-1 (forward order)
+                        for i in range(len(frames_to_decompress) - 1, -1, -1):
+                            idx, data, fmt = frames_to_decompress[i]
+                            if idx > base_idx:  # Decompress frames after the base
+                                prev_positions, prev_colors = decompress_frame(data, prev_positions, prev_colors)
+                    elif prev_positions is None:
+                        raise ValueError(f"Frame {frame_idx:04d} appears to be delta-compressed but no base frame found")
                 else:
                     raise ValueError(f"Frame {frame_idx:04d} appears to be delta-compressed but is the first frame")
         
@@ -396,20 +466,19 @@ class BackgroundCompressor:
                 print(f"[Compress] Warning: Failed to compress frame {frame_idx}: {e}")
                 traceback.print_exc()
     
-    def compress_remaining(self, total_frames: int):
-        """Compress any remaining uncompressed frames after recording."""
-        # Count uncompressed frames
-        uncompressed_count = 0
+    def get_compressed_count(self, total_frames: int) -> int:
+        """Get current count of compressed frames (thread-safe)."""
+        compressed_count = 0
         for i in range(total_frames):
-            if (self.rec_dir / f"frame_{i:04d}.npz").exists():
-                uncompressed_count += 1
-        
-        if uncompressed_count == 0:
-            # All frames already compressed or being compressed
-            print("[Compress] All frames compressed or compressing in background...")
-        else:
-            print(f"[Compress] Compressing remaining {uncompressed_count} frames...")
-        
+            if (self.rec_dir / f"frame_{i:04d}.zstd").exists():
+                compressed_count += 1
+        return compressed_count
+    
+    def compress_remaining(self, total_frames: int, start_time: float, frame_times: list):
+        """
+        Compress any remaining uncompressed frames after recording.
+        Uses the same nested progress bar as frame generation.
+        """
         # Find the last queued batch end
         last_batch_end = (total_frames // self.batch_size) * self.batch_size
         
@@ -418,9 +487,12 @@ class BackgroundCompressor:
             self._compress_batch(last_batch_end, total_frames)
         
         # Wait for background thread to finish with progress updates
+        # Continue using the same nested progress bar
         import time
-        start_wait = time.time()
         last_update = 0
+        
+        # All frames are generated, so frame = total_frames - 1
+        final_frame = total_frames - 1
         
         # Wait while there are pending batches or uncompressed frames
         while True:
@@ -428,13 +500,7 @@ class BackgroundCompressor:
                 pending = self.pending_batches
             
             # Count current progress
-            compressed_now = 0
-            uncompressed_now = 0
-            for i in range(total_frames):
-                if (self.rec_dir / f"frame_{i:04d}.zstd").exists():
-                    compressed_now += 1
-                elif (self.rec_dir / f"frame_{i:04d}.npz").exists():
-                    uncompressed_now += 1
+            compressed_now = self.get_compressed_count(total_frames)
             
             # Break if all frames are compressed and no batches pending
             if compressed_now == total_frames and pending == 0:
@@ -446,30 +512,19 @@ class BackgroundCompressor:
             
             # Update progress every 0.5s to avoid overhead
             if time.time() - last_update >= 0.5:
-                remaining = total_frames - compressed_now
-                pct = compressed_now / total_frames * 100 if total_frames > 0 else 0
+                elapsed = time.time() - start_time
+                # Use average frame time for display (compression doesn't have frame_time)
+                avg_frame_time = sum(frame_times[-10:]) / len(frame_times[-10:]) if frame_times else 0.0
+                eta = 0.0  # No ETA during compression
                 
-                # Simple progress bar
-                bar_width = 30
-                filled = int(bar_width * compressed_now / total_frames) if total_frames > 0 else 0
-                bar = "█" * filled + "░" * (bar_width - filled)
+                # Continue using the same nested progress bar
+                # Frame generation is complete, compression is progressing
+                print_progress(final_frame, total_frames, avg_frame_time, elapsed, eta,
+                              compressed=compressed_now, compressor=self)
                 
-                print(f"\r[Compress] [{bar}] {pct:5.1f}% | {compressed_now}/{total_frames} frames | "
-                      f"{remaining} remaining    ", end="", flush=True)
                 last_update = time.time()
             
             time.sleep(0.1)
-        
-        print()  # New line after progress
-        
-        # Print compression stats
-        compression_ratio = (1 - self.total_saved_bytes / self.total_original_bytes) * 100 if self.total_original_bytes > 0 else 0
-        avg_size_mb = self.total_saved_bytes / max(1, self.compressed_count) / (1024 * 1024)
-        
-        print(f"[Compress] ✓ Compression complete!")
-        print(f"[Compress] Compressed {self.compressed_count}/{total_frames} frames")
-        print(f"[Compress] Compression ratio: {compression_ratio:.1f}% reduction")
-        print(f"[Compress] Average frame size: {avg_size_mb:.2f} MB")
     
     def get_status(self) -> str:
         """Get compression status string."""
@@ -517,8 +572,11 @@ def format_eta(seconds: float) -> str:
     return str(td)
 
 
-def print_progress(frame: int, total: int, frame_time: float, elapsed: float, eta: float):
-    """Print progress bar (full width) and details on two lines, overwriting in place."""
+def print_progress(frame: int, total: int, frame_time: float, elapsed: float, eta: float,
+                   compressed: int = None, compressor: 'BackgroundCompressor' = None):
+    """
+    Print nested progress bars (frame generation + compression overlay) and details.
+    """
     pct = (frame + 1) / total * 100
     
     # Get terminal width, default to 80 if can't detect
@@ -529,11 +587,35 @@ def print_progress(frame: int, total: int, frame_time: float, elapsed: float, et
     
     # Progress bar on first line (full width minus brackets)
     bar_width = term_width - 2  # Account for [ and ]
-    filled = int(bar_width * (frame + 1) / total)
-    bar = "█" * filled + "░" * (bar_width - filled)
+    frame_filled = int(bar_width * (frame + 1) / total)
+    
+    # Build nested progress bar
+    # Base bar: frame generation progress
+    bar_chars = ["░"] * bar_width
+    
+    # Overlay compression progress on top (if compression is happening)
+    if compressed is not None and compressed >= 0:
+        compressed_filled = int(bar_width * compressed / total) if total > 0 else 0
+        # Compression can't exceed generated frames
+        compressed_filled = min(compressed_filled, frame_filled)
+        
+        for i in range(compressed_filled):
+            bar_chars[i] = "█"  # Compressed frames (overlay)
+        for i in range(compressed_filled, frame_filled):
+            bar_chars[i] = "▒"  # Generated but not compressed
+    else:
+        # No compression info, just show frame generation
+        for i in range(frame_filled):
+            bar_chars[i] = "█"
+    
+    bar = "".join(bar_chars)
     
     # Details on second line
-    details = (f"{pct:5.1f}% | Frame {frame+1:4d}/{total} | "
+    compression_info = ""
+    if compressed is not None and compressed >= 0:
+        compression_info = f" | Compressed: {compressed}/{total}"
+    
+    details = (f"{pct:5.1f}% | Frame {frame+1:4d}/{total}{compression_info} | "
                f"Time: {format_time(frame_time, short=True):>6s} | "
                f"Elapsed: {format_time(elapsed):>6s} | ETA: {format_eta(eta)}")
     
@@ -753,27 +835,48 @@ def record(config: dict, resume: bool = False):
             remaining_frames = total_frames - frame - 1
             eta = avg_time * remaining_frames
             
-            print_progress(frame, total_frames, frame_time, elapsed, eta)
+            # Get compression progress for nested progress bar
+            compressed_count = compressor.get_compressed_count(total_frames)
+            print_progress(frame, total_frames, frame_time, elapsed, eta, 
+                          compressed=compressed_count, compressor=compressor)
         
-        # Recording complete - compress remaining frames
-        print(f"\n[Record] ✓ Recording complete!")
-        print(f"[Record] Simulation time: {format_time(time.time() - start_time)}")
-        
-        # Compress any remaining uncompressed frames
-        compressor.compress_remaining(total_frames)
+        # Frame generation complete - compress remaining frames
+        # Continue showing nested progress bar during compression
+        compressor.compress_remaining(total_frames, start_time, frame_times)
         compressor.stop()
         
+        # Clear the progress bar and show completion
+        sys.stdout.write("\033[2A")  # Move up 2 lines (progress bar + details)
+        sys.stdout.write("\033[K")  # Clear progress bar line
+        sys.stdout.write("\033[K")  # Clear details line
+        sys.stdout.flush()
+        
+        # Print compression stats
+        compression_ratio = (1 - compressor.total_saved_bytes / compressor.total_original_bytes) * 100 if compressor.total_original_bytes > 0 else 0
+        avg_size_mb = compressor.total_saved_bytes / max(1, compressor.compressed_count) / (1024 * 1024)
+        
+        print(f"[Record] ✓ Recording complete!")
+        print(f"[Record] Simulation time: {format_time(time.time() - start_time)}")
+        print(f"[Compress] Compressed {compressor.compressed_count}/{total_frames} frames")
+        print(f"[Compress] Compression ratio: {compression_ratio:.1f}% reduction")
+        print(f"[Compress] Average frame size: {avg_size_mb:.2f} MB")
         print(f"[Record] Total time: {format_time(time.time() - start_time)}")
         print(f"[Record] Output: {rec_dir}")
         print(f"\n[Record] To playback: python -m tools.playback {config['session_name']}")
         
     except KeyboardInterrupt:
+        # Clear progress bar
+        sys.stdout.write("\033[2A")  # Move up 2 lines
+        sys.stdout.write("\033[K")  # Clear progress bar line
+        sys.stdout.write("\033[K")  # Clear details line
+        sys.stdout.flush()
+        
         print(f"\n[Record] Paused at frame {frame}")
         print(f"[Record] To resume: python -m tools.record --resume {config['session_name']}")
         
         # Stop background compressor and compress what we have
         print("[Record] Finishing compression...")
-        compressor.compress_remaining(frame + 1)
+        compressor.compress_remaining(frame + 1, start_time, frame_times)
         compressor.stop()
         
         np.savez_compressed(
